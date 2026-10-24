@@ -1,0 +1,6 @@
+{
+  "name": "ถึงคุณ ♡",
+  "description": "พื้นที่ส่วนตัวที่อบอุ่นสำหรับส่งคำขอโทษและเขียนจดหมายตอบกลับ",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

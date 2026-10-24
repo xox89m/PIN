@@ -1,0 +1,120 @@
+@import "tailwindcss";
+
+@theme {
+  --font-display: "Mali", "Sarabun", sans-serif;
+  --font-sans: "Sarabun", sans-serif;
+}
+
+:root {
+  --night-ink: #0f0d0c;
+  --parchment-base: #cdbda8;
+  --parchment-light: #dfd2c0;
+  --parchment-border: #8c765c;
+  --ink-brown: #2b1f16;
+  --ink-muted: #5a4636;
+  --warm-cream: #f4ebe1;
+  --warm-cream-muted: rgba(244, 235, 225, 0.72);
+  --envelope-gold: #dca855;
+  --envelope-gold-flap: #e9bc70;
+}
+
+body {
+  font-family: var(--font-sans);
+  color: var(--warm-cream);
+  background-color: var(--night-ink);
+  margin: 0;
+  padding: 0;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* บัตรกระดาษจดหมายวินเทจขอบกระดาษเก่าเหมือนในภาพต้นฉบับ */
+.vintage-parchment {
+  background-color: var(--parchment-base);
+  background-image:
+    radial-gradient(ellipse at 50% 40%, rgba(255, 248, 238, 0.45) 0%, rgba(165, 140, 112, 0.35) 100%),
+    repeating-linear-gradient(
+      0deg,
+      rgba(90, 68, 48, 0.025) 0px,
+      rgba(90, 68, 48, 0.025) 1px,
+      transparent 1px,
+      transparent 4px
+    );
+  color: var(--ink-brown);
+  border: 1.5px solid rgba(92, 68, 46, 0.55);
+  border-radius: 6px 8px 5px 7px / 7px 5px 8px 6px;
+  box-shadow:
+    0 22px 50px rgba(0, 0, 0, 0.65),
+    inset 0 0 32px rgba(112, 84, 56, 0.22);
+}
+
+/* ปุ่มโปร่งแสงขอบครีมละมุนตามภาพอ้างอิง */
+.night-glass-btn {
+  background: rgba(28, 22, 18, 0.58);
+  backdrop-filter: blur(8px);
+  border: 1px solid rgba(235, 216, 192, 0.45);
+  color: var(--warm-cream);
+  border-radius: 9999px;
+  transition: transform 160ms cubic-bezier(0.16, 1, 0.3, 1), background-color 160ms ease, border-color 160ms ease;
+}
+
+.night-glass-btn:hover:not(:disabled) {
+  background: rgba(235, 216, 192, 0.18);
+  border-color: rgba(244, 235, 225, 0.8);
+}
+
+.night-glass-btn:active:not(:disabled) {
+  transform: scale(0.98);
+}
+
+.night-glass-btn-active {
+  background: rgba(220, 200, 178, 0.28);
+  backdrop-filter: blur(8px);
+  border: 1px solid rgba(244, 235, 225, 0.78);
+  color: #ffffff;
+  border-radius: 9999px;
+  transition: transform 160ms cubic-bezier(0.16, 1, 0.3, 1), background-color 160ms ease;
+}
+
+.night-glass-btn-active:hover:not(:disabled) {
+  background: rgba(220, 200, 178, 0.38);
+}
+
+/* ปุ่มเข้มบนกระดาษวินเทจ (เช่น "เขียนจดหมายตอบกลับ") */
+.parchment-action-btn {
+  background: rgba(58, 45, 34, 0.85);
+  color: #f6efe6;
+  border: 1px solid rgba(43, 31, 22, 0.6);
+  border-radius: 9999px;
+  transition: transform 160ms cubic-bezier(0.16, 1, 0.3, 1), background-color 160ms ease;
+}
+
+.parchment-action-btn:hover:not(:disabled) {
+  background: rgba(43, 31, 22, 0.96);
+}
+
+.parchment-action-btn:active:not(:disabled) {
+  transform: scale(0.98);
+}
+
+/* ช่องกรอกข้อมูลบนกระดาษวินเทจ */
+.parchment-input {
+  background-color: rgba(242, 233, 220, 0.55);
+  border: 1px solid rgba(120, 96, 72, 0.38);
+  border-radius: 8px;
+  color: var(--ink-brown);
+  transition: border-color 150ms ease, background-color 150ms ease;
+}
+
+.parchment-input:focus {
+  outline: none;
+  background-color: rgba(249, 243, 234, 0.82);
+  border-color: rgba(82, 60, 40, 0.75);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
