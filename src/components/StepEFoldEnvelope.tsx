@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { UI_COPY } from '../content/letters';
+import { useSiteCopy } from '../context/SiteCopyContext';
 import { ReplyLetterDraft, SaveStatus } from '../services/letterStorage';
 import {
   GoldenEnvelopeIllustration,
@@ -30,6 +30,7 @@ export function StepEFoldEnvelope({
   onWriteAnotherLetter,
   onReturnToDesk,
 }: StepEFoldEnvelopeProps) {
+  const copy = useSiteCopy();
   const [animPhase, setAnimPhase] = useState<FoldAnimPhase>('verifying_save');
   const foldTimerRef = useRef<number | null>(null);
 
@@ -96,10 +97,10 @@ export function StepEFoldEnvelope({
               className="font-display text-xl sm:text-2xl font-semibold text-[#FADCD8]"
               style={{ textWrap: 'balance' }}
             >
-              {UI_COPY.stepE.unsavedWarningTitle}
+              {copy.stepE.unsavedWarningTitle}
             </h2>
             <p className="text-sm sm:text-base text-[#E8DDD0]/85 leading-relaxed">
-              {UI_COPY.stepE.unsavedWarningBody}
+              {copy.stepE.unsavedWarningBody}
             </p>
             {statusMessage && (
               <p className="text-xs sm:text-sm font-medium text-[#F5B5AC] pt-1">
@@ -114,7 +115,7 @@ export function StepEFoldEnvelope({
               onClick={onRetryFinalSave}
               className="night-glass-btn-active w-full sm:w-auto min-h-[48px] px-7 py-2.5 text-base font-medium whitespace-nowrap shrink-0 cursor-pointer"
             >
-              {UI_COPY.stepE.retrySaveBtn}
+              {copy.stepE.retrySaveBtn}
             </button>
             <button
               type="button"
@@ -129,14 +130,14 @@ export function StepEFoldEnvelope({
 
       {/* กรณีที่ 3: บันทึกสำเร็จแล้ว -> แสดงหน้า "บันทึกแล้ว" และแอนิเมชันพับจดหมายลงซองทอง */}
       {isCurrentVersionConfirmedSaved && animPhase === 'folding_paper' && (
-        <div className="w-full space-y-6 py-4" aria-live="polite">
+        <div className="animate-scene-enter w-full space-y-6 py-4" aria-live="polite">
           <div className="space-y-2">
             <CheckCircle2 className="w-10 h-10 mx-auto text-[#F6EFE6] stroke-[1.6]" />
             <h2 className="font-display text-2xl sm:text-3xl font-semibold text-[#F6EFE6] drop-shadow-[0_3px_14px_rgba(0,0,0,0.85)]">
-              {UI_COPY.stepE.savedHeading}
+              {copy.stepE.savedHeading}
             </h2>
             <p className="text-sm sm:text-base text-[#E8DDD0]/85">
-              {UI_COPY.stepE.savedSubheading}
+              {copy.stepE.savedSubheading}
             </p>
           </div>
 
@@ -155,7 +156,7 @@ export function StepEFoldEnvelope({
               onClick={onReturnToDesk}
               className="night-glass-btn min-h-[48px] px-8 py-2.5 text-sm sm:text-base font-medium whitespace-nowrap shrink-0 cursor-pointer"
             >
-              {UI_COPY.stepE.backToDeskBtn}
+              {copy.stepE.backToDeskBtn}
             </button>
           </div>
 
@@ -165,7 +166,7 @@ export function StepEFoldEnvelope({
               onClick={handleSkipAnimation}
               className="min-h-[44px] px-4 py-2 text-xs sm:text-sm text-[#E8DDD0]/80 underline underline-offset-4 hover:text-white whitespace-nowrap shrink-0 cursor-pointer"
             >
-              {UI_COPY.stepE.skipAnimationBtn}
+              {copy.stepE.skipAnimationBtn}
             </button>
           </div>
         </div>
@@ -173,20 +174,20 @@ export function StepEFoldEnvelope({
 
       {/* กรณีที่ 4: พับใส่ซองปิดผนึกหัวใจเรียบร้อย */}
       {isCurrentVersionConfirmedSaved && animPhase === 'sealed_done' && (
-        <div className="w-full space-y-6 py-4" aria-live="polite">
+        <div className="animate-scene-enter w-full space-y-6 py-4" aria-live="polite">
           <div className="space-y-2">
             <h2
               className="font-display text-xl sm:text-2xl font-semibold text-[#F6EFE6] leading-relaxed drop-shadow-[0_3px_16px_rgba(0,0,0,0.9)]"
               style={{ textWrap: 'balance' }}
             >
-              {UI_COPY.stepE.thankYouTitle}
+              {copy.stepE.thankYouTitle}
               <br />
-              {UI_COPY.stepE.thankYouSubtitle}
+              {copy.stepE.thankYouSubtitle}
             </h2>
-            <p className="text-xl text-[#F6EFE6]">♡</p>
+            <p className="text-xl text-[#F5CA7B] animate-heart-warmth">♡</p>
           </div>
 
-          <div className="max-w-[290px] mx-auto pt-2">
+          <div className="max-w-[290px] mx-auto pt-2 animate-envelope-idle">
             <GoldenEnvelopeIllustration
               isOpen={false}
               isLetterPulledOut={false}
@@ -209,14 +210,14 @@ export function StepEFoldEnvelope({
               onClick={onReturnToDesk}
               className="night-glass-btn-active min-h-[48px] px-8 py-2.5 text-sm sm:text-base font-medium whitespace-nowrap shrink-0 cursor-pointer"
             >
-              {UI_COPY.stepE.backToDeskBtn}
+              {copy.stepE.backToDeskBtn}
             </button>
             <button
               type="button"
               onClick={onWriteAnotherLetter}
               className="night-glass-btn min-h-[48px] px-6 py-2.5 text-sm sm:text-base font-medium whitespace-nowrap shrink-0 cursor-pointer"
             >
-              {UI_COPY.stepE.writeAnotherBtn}
+              {copy.stepE.writeAnotherBtn}
             </button>
           </div>
 
@@ -226,7 +227,7 @@ export function StepEFoldEnvelope({
               onClick={onBackToEditReply}
               className="min-h-[44px] px-4 py-2 text-xs sm:text-sm text-[#E8DDD0]/75 hover:text-white underline underline-offset-4 whitespace-nowrap shrink-0 cursor-pointer"
             >
-              {UI_COPY.stepE.editAgainBtn}
+              {copy.stepE.editAgainBtn}
             </button>
           </div>
         </div>

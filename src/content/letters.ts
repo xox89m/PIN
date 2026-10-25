@@ -3,7 +3,7 @@
  */
 
 export interface LetterDocument {
-  id: 'apology' | 'birthday';
+  id: string;
   isOwnerApprovedForProduction: boolean;
   letterTitle: string;
   senderLabel: string;
@@ -75,7 +75,76 @@ export const BIRTHDAY_LETTER_CONTENT: LetterDocument = {
   senderName: 'ฉัน',
 };
 
-export const UI_COPY = {
+export interface SiteCopy {
+  siteTitle: string;
+  cover: {
+    subtitleLine1: string;
+    subtitleLine2: string;
+    startBtn: string;
+  };
+  stepA: {
+    homeBtn: string;
+    backBtn: string;
+    initialQuestion: string;
+    yesBtn: string;
+    noBtn: string;
+    waitMessage: string;
+    waitSubLabel: string;
+    waitFollowUp: string;
+    actuallyMeBtn: string;
+    reallyNotMeBtn: string;
+    politeExitTitle: string;
+    politeExitBody: string;
+  };
+  stepB: {
+    backBtn: string;
+    question: string;
+    submitBtn: string;
+    wrongDateMessage: string;
+  };
+  stepC: {
+    mailboxHeading: string;
+    deskHintClosed: string;
+    birthdayEnvelopeTag: string;
+    apologyEnvelopeTag: string;
+    mailboxBoxTitle: string;
+    mailboxSubtitle: string;
+    foldBackBtn: string;
+    writeReplyBtn: string;
+    writeNewReplyBtn: string;
+    writeShortBtn: string;
+    privacyFooterNote: string;
+  };
+  stepD: {
+    backBtn: string;
+    heading: string;
+    privacyNoticeBody: string;
+    deletionPolicyNote: string;
+    titleLabel: string;
+    titlePlaceholder: string;
+    authorLabel: string;
+    authorPlaceholder: string;
+    bodyLabel: string;
+    bodyPlaceholder: string;
+    clearDraftBtn: string;
+    finishAndFoldBtn: string;
+  };
+  stepE: {
+    savedHeading: string;
+    savedSubheading: string;
+    skipAnimationBtn: string;
+    thankYouTitle: string;
+    thankYouSubtitle: string;
+    backToDeskBtn: string;
+    writeAnotherBtn: string;
+    editAgainBtn: string;
+    unsavedWarningTitle: string;
+    unsavedWarningBody: string;
+    retrySaveBtn: string;
+  };
+}
+
+export const UI_COPY: SiteCopy = {
   siteTitle: 'ถึงคุณ ♡',
   cover: {
     subtitleLine1: 'บางคำขอโทษ... อาจไม่ถูกพูดออกมา',
@@ -107,9 +176,11 @@ export const UI_COPY = {
   stepC: {
     mailboxHeading: 'โต๊ะจดหมายถึงคุณ',
     deskHintClosed: 'เลือกแตะซองจดหมายบนโต๊ะ หรือเปิดดูกล่องจดหมายด้านข้างได้เลย',
-    birthdayEnvelopeTag: 'ซองจดหมายวันเกิด (ใกล้แก้วกาแฟ)',
-    apologyEnvelopeTag: 'ซองจดหมายขอโทษ',
-    mailboxBoxTitle: 'กล่องจดหมายของคุณ',
+    birthdayEnvelopeTag: 'ซองข้างแก้วกาแฟ · แตะเพื่อเปิดอ่าน',
+    apologyEnvelopeTag: 'ซองจดหมายหลัก · แตะเพื่อเปิดอ่าน',
+    mailboxBoxTitle: 'กล่องใส่จดหมาย',
+    mailboxSubtitle: 'แตะเลือกจดหมายเพื่อเปิดอ่าน',
+    foldBackBtn: 'พับเก็บวางไว้บนโต๊ะ',
     writeReplyBtn: 'เขียนจดหมายตอบกลับ',
     writeNewReplyBtn: 'เขียนจดหมายฉบับใหม่',
     writeShortBtn: 'เขียนจดหมาย',

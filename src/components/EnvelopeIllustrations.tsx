@@ -141,12 +141,24 @@ export function GoldenEnvelopeIllustration({
         disabled ? 'cursor-default' : 'cursor-pointer'
       }`}
     >
-      <div className="relative pt-10 pb-2 -rotate-2 transition-transform duration-300 ease-out group-hover:-translate-y-1.5 group-hover:rotate-0">
+      <div
+        className={`relative pt-10 pb-2 -rotate-2 transition-transform duration-300 ease-out ${
+          !disabled
+            ? 'animate-envelope-idle-delayed group-hover:-translate-y-2.5 group-hover:rotate-0 group-hover:scale-[1.025]'
+            : ''
+        }`}
+      >
+        {!disabled && (
+          <div
+            aria-hidden="true"
+            className="absolute inset-x-6 top-14 bottom-4 rounded-full bg-[#F3C16D]/0 group-hover:bg-[#F3C16D]/18 blur-2xl transition-colors duration-300 pointer-events-none"
+          />
+        )}
         <svg
           viewBox="0 0 380 270"
           fill="none"
           xmlns="http://www.w3.org/2000/svg"
-          className="w-full h-auto overflow-visible drop-shadow-[0_18px_32px_rgba(0,0,0,0.68)]"
+          className="relative w-full h-auto overflow-visible drop-shadow-[0_18px_32px_rgba(0,0,0,0.68)]"
         >
           {/* ด้านในซองสีน้ำตาลทองอบอุ่น */}
           <path
@@ -241,6 +253,7 @@ export function GoldenEnvelopeIllustration({
               fill="#B35C44"
               stroke="#24170E"
               strokeWidth="2"
+              className="origin-[190px_182px] transition-transform duration-300 group-hover:scale-110"
             />
           </g>
         </svg>
@@ -270,36 +283,40 @@ export function CoffeeAndBirthdayEnvelopeIllustration({
       aria-label="แตะเพื่อเปิดอ่านจดหมายสุขสันต์วันเกิด H.B.D. 28/10/2026 ที่วางอยู่ใกล้แก้วกาแฟ"
       className="group relative block w-full max-w-[320px] mx-auto select-none focus:outline-none focus-visible:ring-2 focus-visible:ring-[#F4EBE1] rounded-2xl cursor-pointer"
     >
-      <div className="relative pt-8 pb-2 rotate-1 transition-transform duration-300 ease-out group-hover:-translate-y-1.5 group-hover:rotate-0">
+      <div className="relative pt-8 pb-2 rotate-1 transition-transform duration-300 ease-out animate-envelope-idle group-hover:-translate-y-2.5 group-hover:rotate-0 group-hover:scale-[1.025]">
+        <div
+          aria-hidden="true"
+          className="absolute inset-x-8 top-12 bottom-4 rounded-full bg-[#F5CFA0]/0 group-hover:bg-[#F5CFA0]/18 blur-2xl transition-colors duration-300 pointer-events-none"
+        />
         <svg
           viewBox="0 0 420 265"
           fill="none"
           xmlns="http://www.w3.org/2000/svg"
-          className="w-full h-auto overflow-visible drop-shadow-[0_18px_30px_rgba(0,0,0,0.68)]"
+          className="relative w-full h-auto overflow-visible drop-shadow-[0_18px_30px_rgba(0,0,0,0.68)]"
         >
-          {/* แก้วกาแฟเซรามิกสีน้ำตาลครีมอุ่น ๆ ด้านซ้ายมือ พร้อมไอร้อนบางเบา */}
+          {/* แก้วกาแฟเซรามิกสีน้ำตาลครีมอุ่น ๆ ด้านซ้ายมือ พร้อมไอร้อนลอยกรุ่นมีชีวิตชีวา */}
           <g aria-hidden="true">
-            {/* ไอร้อนเหนือแก้วกาแฟ */}
+            {/* ไอร้อนเหนือแก้วกาแฟเคลื่อนไหวลอยขึ้นจริง */}
             <path
-              d="M58 64 C52 50, 66 42, 60 28"
-              stroke="#F4EBE1"
-              strokeWidth="2"
-              strokeLinecap="round"
-              opacity="0.55"
-            />
-            <path
-              d="M78 58 C72 44, 86 35, 80 20"
-              stroke="#F4EBE1"
+              d="M58 66 C50 52, 67 42, 59 26"
+              stroke="#F7EFE6"
               strokeWidth="2.2"
               strokeLinecap="round"
-              opacity="0.65"
+              className="animate-coffee-steam-1"
             />
             <path
-              d="M97 66 C92 54, 103 46, 98 34"
-              stroke="#F4EBE1"
-              strokeWidth="1.8"
+              d="M78 60 C71 45, 87 34, 80 18"
+              stroke="#F7EFE6"
+              strokeWidth="2.4"
               strokeLinecap="round"
-              opacity="0.45"
+              className="animate-coffee-steam-2"
+            />
+            <path
+              d="M97 68 C91 55, 104 45, 98 31"
+              stroke="#F7EFE6"
+              strokeWidth="1.9"
+              strokeLinecap="round"
+              className="animate-coffee-steam-3"
             />
 
             {/* จานรองแก้วไม้/เซรามิก */}
@@ -473,20 +490,22 @@ export function CoffeeAndBirthdayEnvelopeIllustration({
                 strokeLinejoin="round"
               />
               {/* เหรียญครั่งสีทองอ่อนและหัวใจสีขาวตรงกลางซองวันเกิด */}
-              <circle
-                cx="153"
-                cy="160"
-                r="20"
-                fill="#D4A359"
-                stroke="#24170E"
-                strokeWidth="2"
-              />
-              <path
-                d="M153 170 C153 170, 141 162, 141 155 C141 151, 144.5 148.5, 148.2 150.2 C150.5 151.3, 152 153.2, 153 154.8 C154 153.2, 155.5 151.3, 157.8 150.2 C161.5 148.5, 165 151, 165 155 C165 162, 153 170, 153 170 Z"
-                fill="#FFFDF9"
-                stroke="#24170E"
-                strokeWidth="1.8"
-              />
+              <g className="origin-[153px_160px] transition-transform duration-300 group-hover:scale-110">
+                <circle
+                  cx="153"
+                  cy="160"
+                  r="20"
+                  fill="#D4A359"
+                  stroke="#24170E"
+                  strokeWidth="2"
+                />
+                <path
+                  d="M153 170 C153 170, 141 162, 141 155 C141 151, 144.5 148.5, 148.2 150.2 C150.5 151.3, 152 153.2, 153 154.8 C154 153.2, 155.5 151.3, 157.8 150.2 C161.5 148.5, 165 151, 165 155 C165 162, 153 170, 153 170 Z"
+                  fill="#FFFDF9"
+                  stroke="#24170E"
+                  strokeWidth="1.8"
+                />
+              </g>
             </g>
           </g>
         </svg>

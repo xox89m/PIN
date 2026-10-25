@@ -1,70 +1,31 @@
 import { APP_CONFIG } from '../config';
+import { BgmTrack } from '../config.example';
 
 export enum SoundMode {
-  MELODY_AND_RAIN = 'melody_rain',
-  RAIN_ONLY = 'rain_only',
+  ALL_ON = 'all_on',
+  SFX_ONLY = 'sfx_only',
   MUTED = 'muted',
 }
 
-const SOUND_MODE_STORAGE_KEY = 'to_you_sound_mode_v1';
+const SOUND_MODE_STORAGE_KEY = 'to_you_audio_mode_v2';
+const MUSIC_VOLUME_STORAGE_KEY = 'to_you_music_vol_v2';
+const TRACK_INDEX_STORAGE_KEY = 'to_you_bgm_track_idx_v1';
 
-// โน้ตดนตรี (Hz) สำหรับคอร์ดเปียโนอุ่น ๆ ในคีย์ F Major / D Minor
-const NOTE = {
-  F3: 174.61,
-  G3: 196.0,
-  A3: 220.0,
-  Bb3: 233.08,
-  C4: 261.63,
-  D4: 293.66,
-  E4: 329.63,
-  F4: 349.23,
-  G4: 392.0,
-  A4: 440.0,
-  Bb4: 466.16,
-  C5: 523.25,
-  D5: 587.33,
-  E5: 659.25,
-  F5: 698.46,
-  G5: 783.99,
-};
-
-function B4_NATURAL(): number {
-  return 493.88;
+function resolveAssetUrl(rawPath: string): string {
+  const trimmed = rawPath.trim();
+  if (!trimmed) return '';
+  if (/^(https?:|data:|blob:)/i.test(trimmed)) return trimmed;
+  const cleanRel = trimmed.replace(/^\.?\//, '');
+  const base = import.meta.env.BASE_URL || './';
+  return base.endsWith('/') ? `${base}${cleanRel}` : `${base}/${cleanRel}`;
 }
-
-// ลำดับโน้ตเปียโนบรรเลงช้า ๆ อบอุ่นใจในคีย์ F Major / D Minor
-const CLEAN_PIANO_PHRASES: number[][] = [
-  [NOTE.F3, NOTE.C4, NOTE.A4, NOTE.E4, NOTE.C5, NOTE.A4], // Fmaj7
-  [NOTE.G3, NOTE.E4, B4_NATURAL(), NOTE.G4, NOTE.E4, NOTE.C4], // Em7 / Cmaj7
-  [NOTE.D4, NOTE.A3, NOTE.F4, NOTE.C5, NOTE.A4, NOTE.F4], // Dm7
-  [NOTE.Bb3, NOTE.F4, NOTE.A4, NOTE.D5, NOTE.C5, NOTE.A4], // Bbmaj7
-  [NOTE.G3, NOTE.D4, NOTE.F4, NOTE.Bb4, NOTE.A4, NOTE.G4], // Gm7
-  [NOTE.C4, NOTE.G3, NOTE.F4, NOTE.E4, NOTE.G4, NOTE.C4], // Csus4 -> C
-];
-
-// ทำนองกล่องดนตรี Happy Birthday นุ่ม ๆ เมื่อเปิดซองวันเกิด
-const BIRTHDAY_MOTIF_STEPS: Array<{ freq: number; delayMs: number; durSec: number }> = [
-  { freq: NOTE.C5, delayMs: 0, durSec: 0.45 },
-  { freq: NOTE.C5, delayMs: 380, durSec: 0.35 },
-  { freq: NOTE.D5, delayMs: 720, durSec: 0.75 },
-  { freq: NOTE.C5, delayMs: 1450, durSec: 0.75 },
-  { freq: NOTE.F5, delayMs: 2180, durSec: 0.75 },
-  { freq: NOTE.E5, delayMs: 2920, durSec: 1.35 },
-
-  { freq: NOTE.C5, delayMs: 4350, durSec: 0.45 },
-  { freq: NOTE.C5, delayMs: 4730, durSec: 0.35 },
-  { freq: NOTE.D5, delayMs: 5070, durSec: 0.75 },
-  { freq: NOTE.C5, delayMs: 5800, durSec: 0.75 },
-  { freq: NOTE.G5, delayMs: 6530, durSec: 0.8 },
-  { freq: NOTE.F5, delayMs: 7300, durSec: 1.6 },
-];
 
 export function loadSavedSoundMode(): SoundMode {
   try {
     const raw = localStorage.getItem(SOUND_MODE_STORAGE_KEY);
     if (
-      raw === SoundMode.MELODY_AND_RAIN ||
-      raw === SoundMode.RAIN_ONLY ||
+      raw === SoundMode.ALL_ON ||
+      raw === SoundMode.SFX_ONLY ||
       raw === SoundMode.MUTED
     ) {
       return raw;
@@ -72,55 +33,114 @@ export function loadSavedSoundMode(): SoundMode {
   } catch {
     // Ignore
   }
-  return SoundMode.MELODY_AND_RAIN;
+  return SoundMode.ALL_ON;
 }
 
-export function persistSoundMode(mode: SoundMode): void {
+export function loadSavedMusicVolume(): number {
   try {
-    localStorage.setItem(SOUND_MODE_STORAGE_KEY, mode);
+    const raw = localStorage.getItem(MUSIC_VOLUME_STORAGE_KEY);
+    if (raw !== null) {
+      const parsed = Number(raw);
+      if (!Number.isNaN(parsed) && parsed >= 0 && parsed <= 1) {
+        return parsed;
+      }
+    }
   } catch {
     // Ignore
   }
+  return 0.45;
 }
 
-class WarmAtmosphereSoundEngine {
+function loadSavedTrackIndex(maxTracks: number): number {
+  if (maxTracks <= 0) return 0;
+  try {
+    const raw = localStorage.getItem(TRACK_INDEX_STORAGE_KEY);
+    if (raw !== null) {
+      const parsed = Number(raw);
+      if (Number.isInteger(parsed) && parsed >= 0 && parsed < maxTracks) {
+        return parsed;
+      }
+    }
+  } catch {
+    // Ignore
+  }
+  return 0;
+}
+
+type AudioStateListener = () => void;
+
+class InteractiveLetterSoundEngine {
   private ctx: AudioContext | null = null;
-  private rainSource: AudioBufferSourceNode | null = null;
-  private rainGain: GainNode | null = null;
-  private pianoBus: GainNode | null = null;
   private sfxBus: GainNode | null = null;
+  private bgmAudio: HTMLAudioElement | null = null;
+  private loadedTrackUrl = '';
+  private fadeTimerId: number | null = null;
+  private foldTimers: number[] = [];
+  private listeners = new Set<AudioStateListener>();
 
-  private customAudioEl: HTMLAudioElement | null = null;
-  private melodyIntervalId: number | null = null;
-  private birthdayTimers: number[] = [];
-  private isPlayingBirthdayMotif = false;
-
-  private phraseIdx = 0;
-  private noteIdx = 0;
   private mode: SoundMode = loadSavedSoundMode();
+  private musicVolume: number = loadSavedMusicVolume();
+  private currentTrackIndex: number = loadSavedTrackIndex(
+    APP_CONFIG.bgmTracks.length
+  );
   private isUnlocked = false;
+  private lastKeystrokeAtMs = 0;
 
   constructor() {
     if (typeof document !== 'undefined') {
       document.addEventListener('visibilitychange', () => {
-        if (!this.ctx) return;
         if (document.hidden) {
-          void this.ctx.suspend().catch(() => {});
-          if (this.customAudioEl && !this.customAudioEl.paused) {
-            this.customAudioEl.pause();
+          if (this.bgmAudio && !this.bgmAudio.paused) {
+            this.bgmAudio.pause();
           }
-        } else if (this.isUnlocked && this.mode !== SoundMode.MUTED) {
-          void this.ctx.resume().catch(() => {});
-          if (this.customAudioEl && this.mode === SoundMode.MELODY_AND_RAIN) {
-            void this.customAudioEl.play().catch(() => {});
+          if (this.ctx && this.ctx.state === 'running') {
+            void this.ctx.suspend().catch(() => {});
+          }
+        } else if (this.isUnlocked) {
+          if (this.ctx && this.mode !== SoundMode.MUTED) {
+            void this.ctx.resume().catch(() => {});
+          }
+          if (this.mode === SoundMode.ALL_ON) {
+            this.syncBgmPlayback();
           }
         }
       });
     }
   }
 
+  public subscribe(listener: AudioStateListener): () => void {
+    this.listeners.add(listener);
+    return () => {
+      this.listeners.delete(listener);
+    };
+  }
+
+  private notifyListeners(): void {
+    for (const fn of this.listeners) {
+      fn();
+    }
+  }
+
+  public getTracks(): BgmTrack[] {
+    return APP_CONFIG.bgmTracks;
+  }
+
+  public getCurrentTrackIndex(): number {
+    return this.currentTrackIndex;
+  }
+
+  public getCurrentTrack(): BgmTrack | null {
+    const tracks = APP_CONFIG.bgmTracks;
+    if (tracks.length === 0) return null;
+    return tracks[this.currentTrackIndex % tracks.length] || tracks[0];
+  }
+
   public getMode(): SoundMode {
     return this.mode;
+  }
+
+  public getMusicVolume(): number {
+    return this.musicVolume;
   }
 
   public getIsUnlocked(): boolean {
@@ -139,291 +159,202 @@ class WarmAtmosphereSoundEngine {
       const ctx = new AudioCtx();
       this.ctx = ctx;
 
-      // สร้าง Bus สำหรับเสียงเปียโน พร้อม Echo นุ่ม ๆ เหมือนห้องไม้ยามค่ำคืน
-      const pianoBus = ctx.createGain();
-      pianoBus.gain.value = 0.0001;
-
-      const delay = ctx.createDelay(1.0);
-      delay.delayTime.value = 0.38;
-      const delayFeedback = ctx.createGain();
-      delayFeedback.gain.value = 0.24;
-      const delayFilter = ctx.createBiquadFilter();
-      delayFilter.type = 'lowpass';
-      delayFilter.frequency.value = 950;
-
-      pianoBus.connect(ctx.destination);
-      pianoBus.connect(delay);
-      delay.connect(delayFilter);
-      delayFilter.connect(delayFeedback);
-      delayFeedback.connect(delay);
-      delayFilter.connect(ctx.destination);
-      this.pianoBus = pianoBus;
-
-      // สร้าง Bus สำหรับเสียงกระดาษและปุ่มกด
       const sfxBus = ctx.createGain();
-      sfxBus.gain.value = 0.65;
+      sfxBus.gain.value = 0.92;
       sfxBus.connect(ctx.destination);
       this.sfxBus = sfxBus;
-
-      // สร้างเสียงฝนตกกระทบหน้าต่างแบบนุ่มนวล (Warm Pink/Brown Filtered Rain)
-      this.setupRainLoop(ctx);
     }
     return this.ctx;
   }
 
-  private setupRainLoop(ctx: AudioContext): void {
-    const durationSec = 5;
-    const bufferSize = ctx.sampleRate * durationSec;
-    const buffer = ctx.createBuffer(2, bufferSize, ctx.sampleRate);
+  private ensureBgmElement(): HTMLAudioElement | null {
+    if (typeof window === 'undefined') return null;
+    const track = this.getCurrentTrack();
+    if (!track) return null;
 
-    for (let ch = 0; ch < 2; ch++) {
-      const output = buffer.getChannelData(ch);
-      let b0 = 0;
-      let b1 = 0;
-      let b2 = 0;
-      for (let i = 0; i < bufferSize; i++) {
-        const white = Math.random() * 2 - 1;
-        b0 = 0.99765 * b0 + white * 0.099046;
-        b1 = 0.963 * b1 + white * 0.2965164;
-        b2 = 0.57 * b2 + white * 1.0526913;
-        output[i] = (b0 + b1 + b2 + white * 0.1848) * 0.045;
-      }
+    const resolvedUrl = resolveAssetUrl(track.url);
+    if (!resolvedUrl) return null;
 
-      // Crossfade หัวท้ายให้ Loop เนียนสนิทไม่มีเสียงสะดุด
-      const fadeSamples = Math.floor(ctx.sampleRate * 0.25);
-      for (let i = 0; i < fadeSamples; i++) {
-        const alpha = i / fadeSamples;
-        output[i] =
-          output[i] * alpha + output[bufferSize - fadeSamples + i] * (1 - alpha);
-      }
+    if (!this.bgmAudio) {
+      const audio = new Audio(resolvedUrl);
+      audio.preload = 'auto';
+      audio.loop = APP_CONFIG.bgmTracks.length <= 1;
+      audio.volume = this.musicVolume;
+      audio.addEventListener('ended', () => {
+        if (APP_CONFIG.bgmTracks.length > 1) {
+          this.nextTrack();
+        } else {
+          audio.currentTime = 0;
+          void audio.play().catch(() => {});
+        }
+      });
+      this.bgmAudio = audio;
+      this.loadedTrackUrl = resolvedUrl;
+    } else if (this.loadedTrackUrl !== resolvedUrl) {
+      this.clearFadeTimer();
+      this.bgmAudio.pause();
+      this.bgmAudio.src = resolvedUrl;
+      this.bgmAudio.loop = APP_CONFIG.bgmTracks.length <= 1;
+      this.bgmAudio.load();
+      this.loadedTrackUrl = resolvedUrl;
     }
 
-    const rainSource = ctx.createBufferSource();
-    rainSource.buffer = buffer;
-    rainSource.loop = true;
-
-    const lowpass = ctx.createBiquadFilter();
-    lowpass.type = 'lowpass';
-    lowpass.frequency.value = 640;
-
-    const highpass = ctx.createBiquadFilter();
-    highpass.type = 'highpass';
-    highpass.frequency.value = 130;
-
-    const rainGain = ctx.createGain();
-    rainGain.gain.value = 0.0001;
-
-    rainSource.connect(highpass);
-    highpass.connect(lowpass);
-    lowpass.connect(rainGain);
-    rainGain.connect(ctx.destination);
-
-    rainSource.start();
-    this.rainSource = rainSource;
-    this.rainGain = rainGain;
+    return this.bgmAudio;
   }
 
-  private syncGainsAndLoops(): void {
-    const ctx = this.ctx;
-    if (!ctx || !this.rainGain || !this.pianoBus) return;
+  private clearFadeTimer(): void {
+    if (this.fadeTimerId !== null) {
+      window.clearInterval(this.fadeTimerId);
+      this.fadeTimerId = null;
+    }
+  }
 
-    const now = ctx.currentTime;
-    const customUrl = APP_CONFIG.customBgmUrl?.trim();
+  private syncBgmPlayback(): void {
+    const audio = this.ensureBgmElement();
+    if (!audio) return;
 
-    if (this.mode === SoundMode.MUTED || !this.isUnlocked) {
-      this.rainGain.gain.setTargetAtTime(0.0001, now, 0.25);
-      this.pianoBus.gain.setTargetAtTime(0.0001, now, 0.25);
-      this.stopMelodyLoop();
-      if (this.customAudioEl) {
-        this.customAudioEl.pause();
-      }
+    this.clearFadeTimer();
+
+    if (!this.isUnlocked || this.mode !== SoundMode.ALL_ON) {
+      audio.pause();
       return;
     }
 
-    // เปิดเสียงฝนเบา ๆ สบายหู
-    const targetRainVol = this.mode === SoundMode.RAIN_ONLY ? 0.24 : 0.17;
-    this.rainGain.gain.setTargetAtTime(targetRainVol, now, 0.6);
-
-    if (this.mode === SoundMode.MELODY_AND_RAIN) {
-      if (customUrl) {
-        this.pianoBus.gain.setTargetAtTime(0.0001, now, 0.3);
-        this.stopMelodyLoop();
-        if (!this.customAudioEl) {
-          this.customAudioEl = new Audio(customUrl);
-          this.customAudioEl.loop = true;
-          this.customAudioEl.volume = 0.45;
-        }
-        void this.customAudioEl.play().catch(() => {});
-      } else {
-        this.pianoBus.gain.setTargetAtTime(0.32, now, 0.6);
-        this.startMelodyLoop();
-      }
+    const targetVol = this.musicVolume;
+    if (audio.paused) {
+      audio.volume = Math.min(0.06, targetVol);
+      void audio
+        .play()
+        .then(() => {
+          this.clearFadeTimer();
+          this.fadeTimerId = window.setInterval(() => {
+            if (!this.bgmAudio || this.bgmAudio.paused) {
+              this.clearFadeTimer();
+              return;
+            }
+            const next = Math.min(targetVol, this.bgmAudio.volume + 0.04);
+            this.bgmAudio.volume = next;
+            if (next >= targetVol) {
+              this.clearFadeTimer();
+            }
+          }, 70);
+        })
+        .catch(() => {
+          // รอกดปุ่มจากผู้ใช้หากเบราว์เซอร์ยังล็อกอยู่
+        });
     } else {
-      // RAIN_ONLY
-      this.pianoBus.gain.setTargetAtTime(0.0001, now, 0.35);
-      this.stopMelodyLoop();
-      if (this.customAudioEl) {
-        this.customAudioEl.pause();
-      }
+      audio.volume = targetVol;
     }
   }
 
-  private startMelodyLoop(): void {
-    if (this.melodyIntervalId !== null) return;
-
-    // เล่นโน้ตแรกเบา ๆ หลังเริ่มเล็กน้อย
-    this.playNextAmbientPianoNote();
-
-    this.melodyIntervalId = window.setInterval(() => {
-      if (
-        !this.ctx ||
-        this.ctx.state !== 'running' ||
-        this.mode !== SoundMode.MELODY_AND_RAIN ||
-        this.isPlayingBirthdayMotif
-      ) {
-        return;
-      }
-      this.playNextAmbientPianoNote();
-    }, 1050);
-  }
-
-  private stopMelodyLoop(): void {
-    if (this.melodyIntervalId !== null) {
-      window.clearInterval(this.melodyIntervalId);
-      this.melodyIntervalId = null;
-    }
-  }
-
-  private playNextAmbientPianoNote(): void {
-    if (!this.ctx || !this.pianoBus || this.isPlayingBirthdayMotif) return;
-
-    const phrase = CLEAN_PIANO_PHRASES[this.phraseIdx % CLEAN_PIANO_PHRASES.length];
-    const freq = phrase[this.noteIdx % phrase.length];
-
-    // โน้ตตัวแรกของห้องให้มีน้ำหนักนุ่มลึกขึ้นเล็กน้อย
-    const velocity = this.noteIdx === 0 ? 0.22 : 0.14 + Math.random() * 0.04;
-    const durationSec = this.noteIdx === 0 ? 3.2 : 2.3;
-
-    this.triggerFeltPianoTone(freq, velocity, durationSec);
-
-    this.noteIdx += 1;
-    if (this.noteIdx >= phrase.length) {
-      this.noteIdx = 0;
-      this.phraseIdx = (this.phraseIdx + 1) % CLEAN_PIANO_PHRASES.length;
-    }
-  }
-
-  private triggerFeltPianoTone(
-    freq: number,
-    peakGain: number,
-    durationSec: number,
-    isMusicBox = false
-  ): void {
-    const ctx = this.ctx;
-    const dest = this.pianoBus;
-    if (!ctx || !dest) return;
-
-    const now = ctx.currentTime;
-
-    const oscMain = ctx.createOscillator();
-    oscMain.type = 'sine';
-    oscMain.frequency.setValueAtTime(freq, now);
-
-    const oscWarm = ctx.createOscillator();
-    oscWarm.type = 'triangle';
-    oscWarm.frequency.setValueAtTime(isMusicBox ? freq * 2 : freq, now);
-
-    const warmMix = ctx.createGain();
-    warmMix.gain.setValueAtTime(isMusicBox ? 0.08 : 0.16, now);
-
-    const filter = ctx.createBiquadFilter();
-    filter.type = 'lowpass';
-    filter.frequency.setValueAtTime(isMusicBox ? 2400 : 1350, now);
-    filter.frequency.exponentialRampToValueAtTime(520, now + durationSec);
-
-    const env = ctx.createGain();
-    env.gain.setValueAtTime(0.0001, now);
-    env.gain.linearRampToValueAtTime(peakGain, now + 0.035);
-    env.gain.exponentialRampToValueAtTime(0.0008, now + durationSec);
-
-    oscMain.connect(filter);
-    oscWarm.connect(warmMix);
-    warmMix.connect(filter);
-    filter.connect(env);
-    env.connect(dest);
-
-    oscMain.start(now);
-    oscWarm.start(now);
-    oscMain.stop(now + durationSec + 0.05);
-    oscWarm.stop(now + durationSec + 0.05);
-  }
-
-  /**
-   * เรียกเมื่อผู้ใช้แตะปุ่มครั้งแรก (เช่น ปุ่ม "เริ่มต้น" หรือปุ่มเปิดเสียง) เพื่อปลดล็อกเสียงตามกฎเบราว์เซอร์
-   */
   public unlockAndStartIfEnabled(): void {
     const ctx = this.ensureContext();
-    if (!ctx) return;
-
+    const wasUnlocked = this.isUnlocked;
     this.isUnlocked = true;
-    if (ctx.state === 'suspended') {
-      void ctx.resume().then(() => {
-        this.syncGainsAndLoops();
-      });
-    } else {
-      this.syncGainsAndLoops();
+
+    if (ctx && ctx.state === 'suspended' && this.mode !== SoundMode.MUTED) {
+      void ctx.resume().catch(() => {});
     }
+
+    this.syncBgmPlayback();
+    if (!wasUnlocked) {
+      this.notifyListeners();
+    }
+  }
+
+  public selectTrack(index: number): void {
+    const tracks = APP_CONFIG.bgmTracks;
+    if (tracks.length === 0) return;
+
+    const safeIdx = ((index % tracks.length) + tracks.length) % tracks.length;
+    this.currentTrackIndex = safeIdx;
+    try {
+      localStorage.setItem(TRACK_INDEX_STORAGE_KEY, String(safeIdx));
+    } catch {
+      // Ignore
+    }
+
+    if (this.mode !== SoundMode.ALL_ON) {
+      this.mode = SoundMode.ALL_ON;
+      try {
+        localStorage.setItem(SOUND_MODE_STORAGE_KEY, SoundMode.ALL_ON);
+      } catch {
+        // Ignore
+      }
+    }
+
+    this.unlockAndStartIfEnabled();
+    this.syncBgmPlayback();
+    this.notifyListeners();
+  }
+
+  public nextTrack(): void {
+    this.selectTrack(this.currentTrackIndex + 1);
+  }
+
+  public prevTrack(): void {
+    this.selectTrack(this.currentTrackIndex - 1);
   }
 
   public setMode(nextMode: SoundMode): void {
     this.mode = nextMode;
-    persistSoundMode(nextMode);
+    try {
+      localStorage.setItem(SOUND_MODE_STORAGE_KEY, nextMode);
+    } catch {
+      // Ignore
+    }
 
     if (nextMode !== SoundMode.MUTED) {
       this.unlockAndStartIfEnabled();
     } else {
-      this.clearBirthdayTimers();
-      this.syncGainsAndLoops();
+      for (const id of this.foldTimers) {
+        window.clearTimeout(id);
+      }
+      this.foldTimers = [];
+      this.syncBgmPlayback();
     }
+    this.notifyListeners();
   }
 
-  private clearBirthdayTimers(): void {
-    for (const id of this.birthdayTimers) {
-      window.clearTimeout(id);
+  public setMusicVolume(nextVol: number): void {
+    const clamped = Math.max(0, Math.min(1, nextVol));
+    this.musicVolume = clamped;
+    try {
+      localStorage.setItem(MUSIC_VOLUME_STORAGE_KEY, String(clamped));
+    } catch {
+      // Ignore
     }
-    this.birthdayTimers = [];
-    this.isPlayingBirthdayMotif = false;
+
+    if (this.bgmAudio) {
+      this.clearFadeTimer();
+      this.bgmAudio.volume = clamped;
+    }
+
+    if (clamped > 0 && this.mode === SoundMode.MUTED) {
+      this.setMode(SoundMode.ALL_ON);
+    } else if (clamped > 0 && this.mode === SoundMode.ALL_ON) {
+      this.unlockAndStartIfEnabled();
+    }
+    this.notifyListeners();
+  }
+
+  private createPaperTextureBuffer(ctx: AudioContext, durationSec: number): AudioBuffer {
+    const sampleCount = Math.max(1, Math.floor(ctx.sampleRate * durationSec));
+    const buffer = ctx.createBuffer(1, sampleCount, ctx.sampleRate);
+    const data = buffer.getChannelData(0);
+
+    let last = 0;
+    for (let i = 0; i < sampleCount; i++) {
+      const white = Math.random() * 2 - 1;
+      const grain = 0.65 + 0.35 * Math.sin(i * 0.043) * Math.cos(i * 0.017);
+      last = last * 0.58 + white * 0.42;
+      data[i] = last * grain;
+    }
+    return buffer;
   }
 
   /**
-   * เล่นทำนองกล่องดนตรี Happy Birthday นุ่ม ๆ เมื่อเปิดอ่านซองจดหมายวันเกิด
-   */
-  public playBirthdayMusicBoxChime(): void {
-    if (this.mode !== SoundMode.MELODY_AND_RAIN) return;
-    if (APP_CONFIG.customBgmUrl?.trim()) return;
-
-    this.unlockAndStartIfEnabled();
-    if (!this.ctx) return;
-
-    this.clearBirthdayTimers();
-    this.isPlayingBirthdayMotif = true;
-
-    for (const step of BIRTHDAY_MOTIF_STEPS) {
-      const timerId = window.setTimeout(() => {
-        if (this.mode !== SoundMode.MELODY_AND_RAIN) return;
-        this.triggerFeltPianoTone(step.freq, 0.2, step.durSec, true);
-      }, step.delayMs);
-      this.birthdayTimers.push(timerId);
-    }
-
-    const endId = window.setTimeout(() => {
-      this.isPlayingBirthdayMotif = false;
-    }, 9200);
-    this.birthdayTimers.push(endId);
-  }
-
-  /**
-   * เสียงคลี่ซองจดหมาย / เลื่อนกระดาษวินเทจออกอ่านเบา ๆ
+   * 1. เสียงเปิดซองจดหมายและดึงกระดาษออกมาอ่าน
    */
   public playPaperOpenSfx(): void {
     if (this.mode === SoundMode.MUTED) return;
@@ -433,51 +364,249 @@ class WarmAtmosphereSoundEngine {
     if (!ctx || !dest) return;
 
     const now = ctx.currentTime;
-    const dur = 0.22;
-    const sampleCount = Math.floor(ctx.sampleRate * dur);
-    const noiseBuf = ctx.createBuffer(1, sampleCount, ctx.sampleRate);
-    const data = noiseBuf.getChannelData(0);
-    for (let i = 0; i < sampleCount; i++) {
-      data[i] = (Math.random() * 2 - 1) * 0.35;
-    }
+
+    const flapDur = 0.07;
+    const flapSrc = ctx.createBufferSource();
+    flapSrc.buffer = this.createPaperTextureBuffer(ctx, flapDur);
+
+    const flapFilter = ctx.createBiquadFilter();
+    flapFilter.type = 'highpass';
+    flapFilter.frequency.setValueAtTime(1350, now);
+
+    const flapGain = ctx.createGain();
+    flapGain.gain.setValueAtTime(0.001, now);
+    flapGain.gain.linearRampToValueAtTime(0.32, now + 0.012);
+    flapGain.gain.exponentialRampToValueAtTime(0.001, now + flapDur);
+
+    flapSrc.connect(flapFilter);
+    flapFilter.connect(flapGain);
+    flapGain.connect(dest);
+    flapSrc.start(now);
+    flapSrc.stop(now + flapDur + 0.01);
+
+    const slideStart = now + 0.045;
+    const slideDur = 0.38;
+    const slideSrc = ctx.createBufferSource();
+    slideSrc.buffer = this.createPaperTextureBuffer(ctx, slideDur);
+
+    const slideBand = ctx.createBiquadFilter();
+    slideBand.type = 'bandpass';
+    slideBand.Q.setValueAtTime(1.25, slideStart);
+    slideBand.frequency.setValueAtTime(680, slideStart);
+    slideBand.frequency.exponentialRampToValueAtTime(2150, slideStart + 0.16);
+    slideBand.frequency.exponentialRampToValueAtTime(1180, slideStart + slideDur);
+
+    const slideGain = ctx.createGain();
+    slideGain.gain.setValueAtTime(0.001, slideStart);
+    slideGain.gain.linearRampToValueAtTime(0.45, slideStart + 0.07);
+    slideGain.gain.setValueAtTime(0.38, slideStart + 0.19);
+    slideGain.gain.exponentialRampToValueAtTime(0.001, slideStart + slideDur);
+
+    slideSrc.connect(slideBand);
+    slideBand.connect(slideGain);
+    slideGain.connect(dest);
+    slideSrc.start(slideStart);
+    slideSrc.stop(slideStart + slideDur + 0.02);
+  }
+
+  /**
+   * 2. เสียงพับเก็บกระดาษวางคืนบนโต๊ะไม้
+   */
+  public playPaperCloseSfx(): void {
+    if (this.mode === SoundMode.MUTED) return;
+    this.unlockAndStartIfEnabled();
+    const ctx = this.ctx;
+    const dest = this.sfxBus;
+    if (!ctx || !dest) return;
+
+    const now = ctx.currentTime;
+    const dur = 0.25;
 
     const src = ctx.createBufferSource();
-    src.buffer = noiseBuf;
+    src.buffer = this.createPaperTextureBuffer(ctx, dur);
 
     const filter = ctx.createBiquadFilter();
     filter.type = 'bandpass';
-    filter.frequency.setValueAtTime(850, now);
-    filter.frequency.exponentialRampToValueAtTime(1750, now + dur);
-    filter.Q.value = 1.6;
+    filter.Q.value = 1.4;
+    filter.frequency.setValueAtTime(1850, now);
+    filter.frequency.exponentialRampToValueAtTime(680, now + dur);
 
     const gain = ctx.createGain();
     gain.gain.setValueAtTime(0.001, now);
-    gain.gain.linearRampToValueAtTime(0.16, now + 0.04);
+    gain.gain.linearRampToValueAtTime(0.34, now + 0.04);
     gain.gain.exponentialRampToValueAtTime(0.001, now + dur);
 
     src.connect(filter);
     filter.connect(gain);
     gain.connect(dest);
-
     src.start(now);
     src.stop(now + dur + 0.02);
+
+    this.triggerWoodDeskPat(now + 0.16, 0.16);
   }
 
   /**
-   * เสียงพับกระดาษจดหมายลงซองอย่างทะนุถนอม
+   * 3. เสียงพับจดหมายใส่ซองและปิดผนึกหัวใจ
    */
   public playPaperFoldSfx(): void {
     if (this.mode === SoundMode.MUTED) return;
-    this.playPaperOpenSfx();
-    window.setTimeout(() => {
-      if (this.mode !== SoundMode.MUTED) {
-        this.playSoftTapSfx();
+    this.unlockAndStartIfEnabled();
+
+    for (const id of this.foldTimers) {
+      window.clearTimeout(id);
+    }
+    this.foldTimers = [];
+
+    this.triggerPaperCrease(1050, 2350, 0.24, 0.42);
+
+    const t1 = window.setTimeout(() => {
+      if (this.mode === SoundMode.MUTED) return;
+      this.triggerPaperCrease(1750, 760, 0.3, 0.38);
+    }, 360);
+
+    const t2 = window.setTimeout(() => {
+      if (this.mode === SoundMode.MUTED) return;
+      this.triggerPaperCrease(1300, 900, 0.15, 0.26);
+      if (this.ctx) {
+        this.triggerWoodDeskPat(this.ctx.currentTime + 0.05, 0.22);
       }
-    }, 320);
+    }, 780);
+
+    this.foldTimers.push(t1, t2);
+  }
+
+  private triggerPaperCrease(
+    startFreq: number,
+    endFreq: number,
+    durSec: number,
+    peakGain: number
+  ): void {
+    const ctx = this.ctx;
+    const dest = this.sfxBus;
+    if (!ctx || !dest) return;
+
+    const now = ctx.currentTime;
+    const src = ctx.createBufferSource();
+    src.buffer = this.createPaperTextureBuffer(ctx, durSec);
+
+    const filter = ctx.createBiquadFilter();
+    filter.type = 'bandpass';
+    filter.Q.value = 1.3;
+    filter.frequency.setValueAtTime(startFreq, now);
+    filter.frequency.exponentialRampToValueAtTime(endFreq, now + durSec);
+
+    const gain = ctx.createGain();
+    gain.gain.setValueAtTime(0.001, now);
+    gain.gain.linearRampToValueAtTime(peakGain, now + 0.045);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + durSec);
+
+    src.connect(filter);
+    filter.connect(gain);
+    gain.connect(dest);
+    src.start(now);
+    src.stop(now + durSec + 0.02);
+  }
+
+  private triggerWoodDeskPat(startTime: number, peakGain: number): void {
+    const ctx = this.ctx;
+    const dest = this.sfxBus;
+    if (!ctx || !dest) return;
+
+    const osc = ctx.createOscillator();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(165, startTime);
+    osc.frequency.exponentialRampToValueAtTime(68, startTime + 0.075);
+
+    const gain = ctx.createGain();
+    gain.gain.setValueAtTime(0.001, startTime);
+    gain.gain.linearRampToValueAtTime(peakGain, startTime + 0.01);
+    gain.gain.exponentialRampToValueAtTime(0.001, startTime + 0.08);
+
+    osc.connect(gain);
+    gain.connect(dest);
+    osc.start(startTime);
+    osc.stop(startTime + 0.09);
   }
 
   /**
-   * เสียงแตะปุ่มนุ่ม ๆ
+   * 4. เสียงเขียนปากกาลงกระดาษและพิมพ์ข้อความ
+   */
+  public playWritingKeystrokeSfx(key?: string): void {
+    if (this.mode === SoundMode.MUTED) return;
+
+    const nowMs = performance.now();
+    if (nowMs - this.lastKeystrokeAtMs < 28) {
+      return;
+    }
+    this.lastKeystrokeAtMs = nowMs;
+
+    this.unlockAndStartIfEnabled();
+    const ctx = this.ctx;
+    const dest = this.sfxBus;
+    if (!ctx || !dest) return;
+
+    const now = ctx.currentTime;
+
+    if (key === 'Enter') {
+      this.triggerPaperCrease(950, 1550, 0.11, 0.25);
+      this.triggerWoodDeskPat(now + 0.01, 0.12);
+      return;
+    }
+
+    if (key === ' ') {
+      this.triggerPaperCrease(1900, 1300, 0.055, 0.2);
+      this.triggerWoodDeskPat(now, 0.14);
+      return;
+    }
+
+    if (key === 'Backspace' || key === 'Delete') {
+      this.triggerPaperCrease(1700, 950, 0.036, 0.18);
+      return;
+    }
+
+    const nibDur = 0.034 + Math.random() * 0.016;
+    const nibSrc = ctx.createBufferSource();
+    nibSrc.buffer = this.createPaperTextureBuffer(ctx, nibDur);
+
+    const nibFilter = ctx.createBiquadFilter();
+    nibFilter.type = 'bandpass';
+    nibFilter.Q.value = 1.9;
+    const baseScratchFreq = 2400 + Math.random() * 1100;
+    nibFilter.frequency.setValueAtTime(baseScratchFreq, now);
+    nibFilter.frequency.exponentialRampToValueAtTime(
+      baseScratchFreq * 0.72,
+      now + nibDur
+    );
+
+    const nibGain = ctx.createGain();
+    nibGain.gain.setValueAtTime(0.001, now);
+    nibGain.gain.linearRampToValueAtTime(0.24, now + 0.006);
+    nibGain.gain.exponentialRampToValueAtTime(0.001, now + nibDur);
+
+    nibSrc.connect(nibFilter);
+    nibFilter.connect(nibGain);
+    nibGain.connect(dest);
+    nibSrc.start(now);
+    nibSrc.stop(now + nibDur + 0.01);
+
+    const keyOsc = ctx.createOscillator();
+    keyOsc.type = 'triangle';
+    const startPitch = 215 + Math.random() * 55;
+    keyOsc.frequency.setValueAtTime(startPitch, now);
+    keyOsc.frequency.exponentialRampToValueAtTime(82, now + 0.024);
+
+    const keyGain = ctx.createGain();
+    keyGain.gain.setValueAtTime(0.11, now);
+    keyGain.gain.exponentialRampToValueAtTime(0.001, now + 0.026);
+
+    keyOsc.connect(keyGain);
+    keyGain.connect(dest);
+    keyOsc.start(now);
+    keyOsc.stop(now + 0.03);
+  }
+
+  /**
+   * 5. เสียงแตะปุ่มทั่วไปอย่างนุ่มนวล
    */
   public playSoftTapSfx(): void {
     if (this.mode === SoundMode.MUTED) return;
@@ -489,11 +618,11 @@ class WarmAtmosphereSoundEngine {
     const now = ctx.currentTime;
     const osc = ctx.createOscillator();
     osc.type = 'sine';
-    osc.frequency.setValueAtTime(280, now);
-    osc.frequency.exponentialRampToValueAtTime(140, now + 0.055);
+    osc.frequency.setValueAtTime(300, now);
+    osc.frequency.exponentialRampToValueAtTime(135, now + 0.05);
 
     const gain = ctx.createGain();
-    gain.gain.setValueAtTime(0.08, now);
+    gain.gain.setValueAtTime(0.14, now);
     gain.gain.exponentialRampToValueAtTime(0.001, now + 0.055);
 
     osc.connect(gain);
@@ -503,4 +632,4 @@ class WarmAtmosphereSoundEngine {
   }
 }
 
-export const soundEngine = new WarmAtmosphereSoundEngine();
+export const soundEngine = new InteractiveLetterSoundEngine();

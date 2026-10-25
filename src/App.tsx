@@ -1,15 +1,26 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { APP_CONFIG } from './config';
+import { LetterDocument, SiteCopy } from './content/letters';
+import { SiteCopyContext } from './context/SiteCopyContext';
 import {
   clearLocalDraft,
   createInitialDraft,
+  fetchOwnerConfigFromCloud,
   loadDraftFromLocal,
   loadLocalSentHistory,
+  loadOwnerLettersFromLocal,
+  loadSiteCopyFromLocal,
   removeLetterFromLocalHistory,
   ReplyLetterDraft,
+  resetOwnerLettersInLocal,
+  resetSiteCopyInLocal,
   saveDraftToLocal,
+  saveOwnerLettersToLocal,
+  saveSiteCopyToLocal,
   SaveStatus,
   saveViaGasWebApp,
+  syncAdminOwnerLetterToDrive,
+  syncAdminSiteCopyToDrive,
   upsertLetterIntoLocalHistory,
 } from './services/letterStorage';
 import { StepCoverLanding } from './components/StepCoverLanding';
@@ -19,11 +30,9 @@ import { StepCDesk } from './components/StepCDesk';
 import { StepDWriteReply } from './components/StepDWriteReply';
 import { StepEFoldEnvelope } from './components/StepEFoldEnvelope';
 import { SoundControlBar } from './components/SoundControlBar';
+import { AdminGlobalBar, StepKey } from './components/AdminGlobalBar';
+import { AmbientAtmosphere, LivingSceneId } from './components/AmbientAtmosphere';
 import { soundEngine, SoundMode } from './services/soundEngine';
-
-import rainyWindowBg from './assets/images/rainy_window_candle_desk_1792837371636.jpg';
-import nightPorchBg from './assets/images/rainy_night_house_porch_1792837373495.jpg';
-import warmDeskBg from './assets/images/warm_wooden_desk_candlelight_1792837373650.jpg';
 
 export enum AppStep {
   STEP_COVER = 'COVER',
@@ -36,16 +45,29 @@ export enum AppStep {
 
 export default function App() {
   const [currentStep, setCurrentStep] = useState<AppStep>(AppStep.STEP_COVER);
+  const [isAdmin, setIsAdmin] = useState<boolean>(false);
 
-  // Sound Atmosphere State
+  // Sound Atmosphere & Playlist State
   const [soundMode, setSoundMode] = useState<SoundMode>(() =>
     soundEngine.getMode()
+  );
+  const [musicVolume, setMusicVolume] = useState<number>(() =>
+    soundEngine.getMusicVolume()
+  );
+  const [currentTrackIndex, setCurrentTrackIndex] = useState<number>(() =>
+    soundEngine.getCurrentTrackIndex()
   );
   const [isAudioUnlocked, setIsAudioUnlocked] = useState<boolean>(() =>
     soundEngine.getIsUnlocked()
   );
 
-  // Draft & Local Letterbox History States
+  // Owner Letters, Dynamic UI Copy & Reply Draft/History States
+  const [siteCopy, setSiteCopy] = useState<SiteCopy>(() =>
+    loadSiteCopyFromLocal()
+  );
+  const [ownerLetters, setOwnerLetters] = useState<LetterDocument[]>(() =>
+    loadOwnerLettersFromLocal()
+  );
   const [draft, setDraft] = useState<ReplyLetterDraft>(() => loadDraftFromLocal());
   const [sentLetters, setSentLetters] = useState<ReplyLetterDraft[]>(() =>
     loadLocalSentHistory()
@@ -72,7 +94,36 @@ export default function App() {
     draftRef.current = draft;
   }, [draft]);
 
-  // ปลดล็อกระบบเสียงอัตโนมัติทันทีที่ผู้ใช้แตะหน้าจอหรือกดปุ่มครั้งแรก (ตามกฎ Autoplay ของเบราว์เซอร์)
+  // ซิงก์สถานะเพลงและเสียงกับ soundEngine (เช่น เมื่อเพลงจบแล้วเลื่อนไปเพลงถัดไปอัตโนมัติ)
+  useEffect(() => {
+    return soundEngine.subscribe(() => {
+      setSoundMode(soundEngine.getMode());
+      setMusicVolume(soundEngine.getMusicVolume());
+      setCurrentTrackIndex(soundEngine.getCurrentTrackIndex());
+      setIsAudioUnlocked(soundEngine.getIsUnlocked());
+    });
+  }, []);
+
+  // อัปเดตชื่อแท็บหน้าเว็บตาม siteTitle ที่แอดมินตั้งไว้
+  useEffect(() => {
+    if (siteCopy.siteTitle.trim()) {
+      document.title = siteCopy.siteTitle.trim();
+    }
+  }, [siteCopy.siteTitle]);
+
+  // โหลดจดหมายหลักและข้อความหน้าเว็บของแอดมินที่ซิงก์ไว้บน Cloud (ถ้ามี)
+  useEffect(() => {
+    void fetchOwnerConfigFromCloud().then(({ ownerLetters: cloudDocs, siteCopy: cloudCopy }) => {
+      if (cloudDocs && cloudDocs.length > 0) {
+        setOwnerLetters(cloudDocs);
+      }
+      if (cloudCopy) {
+        setSiteCopy(cloudCopy);
+      }
+    });
+  }, []);
+
+  // ปลดล็อกระบบเสียงอัตโนมัติทันทีที่ผู้ใช้แตะหน้าจอหรือกดปุ่มครั้งแรก
   useEffect(() => {
     const unlockOnce = () => {
       if (soundEngine.getMode() !== SoundMode.MUTED) {
@@ -90,8 +141,10 @@ export default function App() {
 
   const handleChangeSoundMode = (nextMode: SoundMode) => {
     soundEngine.setMode(nextMode);
-    setSoundMode(nextMode);
-    setIsAudioUnlocked(soundEngine.getIsUnlocked());
+  };
+
+  const handleChangeMusicVolume = (nextVol: number) => {
+    soundEngine.setMusicVolume(nextVol);
   };
 
   const clearTimers = useCallback(() => {
@@ -115,7 +168,7 @@ export default function App() {
   }, [clearTimers]);
 
   /**
-   * ส่งข้อมูลจดหมายไปบันทึกยัง Google Apps Script Web App จริง
+   * ส่งข้อมูลจดหมายตอบกลับไปบันทึกยัง Google Apps Script Web App จริง
    */
   const executeSave = useCallback(
     async (isFinalFold = false): Promise<boolean> => {
@@ -287,6 +340,98 @@ export default function App() {
     };
   }, [executeSave]);
 
+  // ฟังก์ชันจัดการจดหมายสำหรับแอดมิน (28 สิงหาคม 2111)
+  const handleSaveOwnerLetter = async (
+    updatedDoc: LetterDocument
+  ): Promise<boolean> => {
+    const existingIdx = ownerLetters.findIndex((d) => d.id === updatedDoc.id);
+    const nextList =
+      existingIdx >= 0
+        ? ownerLetters.map((d, i) => (i === existingIdx ? updatedDoc : d))
+        : [...ownerLetters, updatedDoc];
+
+    setOwnerLetters(nextList);
+    saveOwnerLettersToLocal(nextList);
+    return syncAdminOwnerLetterToDrive(updatedDoc, nextList);
+  };
+
+  const handleDeleteExtraOwnerLetter = (docId: string) => {
+    if (docId === 'apology' || docId === 'birthday') return;
+    const nextList = ownerLetters.filter((d) => d.id !== docId);
+    setOwnerLetters(nextList);
+    saveOwnerLettersToLocal(nextList);
+    const apology = nextList.find((d) => d.id === 'apology');
+    if (apology) {
+      void syncAdminOwnerLetterToDrive(apology, nextList);
+    }
+  };
+
+  const handleResetOwnerLetters = () => {
+    const defaults = resetOwnerLettersInLocal();
+    setOwnerLetters(defaults);
+    if (defaults[0]) {
+      void syncAdminOwnerLetterToDrive(defaults[0], defaults);
+    }
+  };
+
+  // ฟังก์ชันแก้ไขและคืนค่าคำพูดทุกหน้าสำหรับแอดมิน
+  const handleSaveSiteCopy = async (nextCopy: SiteCopy): Promise<boolean> => {
+    setSiteCopy(nextCopy);
+    saveSiteCopyToLocal(nextCopy);
+    return syncAdminSiteCopyToDrive(nextCopy);
+  };
+
+  const handleResetSiteCopy = () => {
+    const defaults = resetSiteCopyInLocal();
+    setSiteCopy(defaults);
+    void syncAdminSiteCopyToDrive(defaults);
+  };
+
+  const handleAdminSaveReplyLetter = async (
+    updatedReply: ReplyLetterDraft
+  ): Promise<boolean> => {
+    if (draftRef.current.letterId === updatedReply.letterId) {
+      draftRef.current = updatedReply;
+      setDraft(updatedReply);
+      saveDraftToLocal(updatedReply);
+    }
+    setSentLetters(upsertLetterIntoLocalHistory(updatedReply));
+
+    try {
+      const res = await saveViaGasWebApp({
+        draft: updatedReply,
+        isFinalFold: updatedReply.recoveryState === 'completed',
+      });
+      if (res.ok) {
+        const syncedCopy: ReplyLetterDraft = {
+          ...updatedReply,
+          lastSavedVersion: Math.max(updatedReply.lastSavedVersion, res.version),
+          lastSavedIso: res.savedAt,
+        };
+        if (draftRef.current.letterId === syncedCopy.letterId) {
+          draftRef.current = syncedCopy;
+          setDraft(syncedCopy);
+          saveDraftToLocal(syncedCopy);
+        }
+        setSentLetters(upsertLetterIntoLocalHistory(syncedCopy));
+        return true;
+      }
+    } catch {
+      // Ignore network failure - local copy is already saved
+    }
+    return false;
+  };
+
+  const handleAdminDeleteReplyLetter = (letterId: string) => {
+    setSentLetters(removeLetterFromLocalHistory(letterId));
+    if (draftRef.current.letterId === letterId) {
+      const fresh = clearLocalDraft();
+      draftRef.current = fresh;
+      setDraft(fresh);
+      setSaveStatus(SaveStatus.UNSAVED);
+    }
+  };
+
   const handleUpdateDraftField = (
     field: 'title' | 'author' | 'body',
     value: string
@@ -324,7 +469,6 @@ export default function App() {
 
   const handleStartNewReply = () => {
     clearTimers();
-    // บันทึกฉบับเดิมที่เคยมีเนื้อหาไว้ในประวัติกล่องจดหมายก่อนเริ่มฉบับใหม่
     const prev = draftRef.current;
     if (prev.title.trim() || prev.body.trim()) {
       setSentLetters(upsertLetterIntoLocalHistory(prev));
@@ -336,16 +480,17 @@ export default function App() {
     saveDraftToLocal(fresh);
     setSaveStatus(SaveStatus.UNSAVED);
     setStatusMessage('');
+    soundEngine.playPaperOpenSfx();
     setCurrentStep(AppStep.STEP_D_REPLY);
   };
 
   const handleContinueOrStartReply = () => {
     clearTimers();
-    // หากฉบับปัจจุบันพับเก็บเสร็จสมบูรณ์แล้ว การกด "เขียนจดหมายตอบกลับ" จะเปิดกระดาษแผ่นใหม่ให้อัตโนมัติ
     if (draftRef.current.recoveryState === 'completed') {
       handleStartNewReply();
       return;
     }
+    soundEngine.playPaperOpenSfx();
     setCurrentStep(AppStep.STEP_D_REPLY);
   };
 
@@ -372,6 +517,7 @@ export default function App() {
       setSaveStatus(SaveStatus.UNSAVED);
     }
     setStatusMessage('');
+    soundEngine.playPaperOpenSfx();
     setCurrentStep(AppStep.STEP_D_REPLY);
   };
 
@@ -429,127 +575,161 @@ export default function App() {
     draft.lastSavedVersion >= draft.version &&
     saveStatus === SaveStatus.SAVED;
 
-  const getSceneBackground = () => {
-    if (APP_CONFIG.customVisualAssets.deskBackgroundUrl) {
-      return APP_CONFIG.customVisualAssets.deskBackgroundUrl;
-    }
+  const getLivingSceneId = (): LivingSceneId => {
     switch (currentStep) {
       case AppStep.STEP_B_BIRTHDAY:
-        return nightPorchBg;
+        return 'night_porch';
       case AppStep.STEP_C_DESK:
       case AppStep.STEP_D_REPLY:
-        return warmDeskBg;
+        return 'warm_desk';
       case AppStep.STEP_COVER:
       case AppStep.STEP_A_QUESTION:
       case AppStep.STEP_E_FOLD:
       default:
-        return rainyWindowBg;
+        return 'rainy_window';
     }
   };
 
   return (
-    <div className="relative min-h-screen flex flex-col bg-[#0F0D0C] text-[#F4EBE1] overflow-x-hidden">
-      {/* ภาพพื้นหลังบรรยากาศคืนฝนตกและแสงเทียนตามฉาก พร้อม Scrim ควบคุมความชัดของตัวอักษร */}
-      <div className="fixed inset-0 z-0 pointer-events-none">
-        <img
-          src={getSceneBackground()}
-          alt=""
-          referrerPolicy="no-referrer"
-          className="w-full h-full object-cover object-center transition-opacity duration-500"
+    <SiteCopyContext.Provider value={siteCopy}>
+      <div className="relative min-h-screen flex flex-col bg-[#0F0D0C] text-[#F4EBE1] overflow-x-hidden">
+        {/* พื้นหลังมีชีวิตชีวา: สายฝนตกด้านนอก หยดน้ำไหลตามกระจกหน้าต่าง และเปลวไฟเทียนพริ้วไหวตรงพิกัดเทียนจริง */}
+        <AmbientAtmosphere
+          sceneId={getLivingSceneId()}
+          customBgUrl={
+            APP_CONFIG.customVisualAssets.deskBackgroundUrl || undefined
+          }
         />
-        <div className="absolute inset-0 bg-gradient-to-b from-black/65 via-black/50 to-black/75" />
+
+        {/* แถบเครื่องมือแอดมินมุมซ้ายบน (มีปุ่มกลับหน้าแรก แก้ไขคำได้ทุกหน้า และข้ามไปหน้าใดก็ได้) */}
+        {isAdmin && (
+          <AdminGlobalBar
+            currentStep={currentStep as StepKey}
+            siteCopy={siteCopy}
+            onJumpToStep={(step) => setCurrentStep(step as AppStep)}
+            onSaveSiteCopy={handleSaveSiteCopy}
+            onResetSiteCopy={handleResetSiteCopy}
+            onExitAdminMode={() => setIsAdmin(false)}
+          />
+        )}
+
+        {/* ปุ่มควบคุมเสียงเพลงและเสียงกระดาษมุมขวาบน */}
+        <SoundControlBar
+          soundMode={soundMode}
+          musicVolume={musicVolume}
+          tracks={soundEngine.getTracks()}
+          currentTrackIndex={currentTrackIndex}
+          isAudioUnlocked={isAudioUnlocked}
+          onChangeSoundMode={handleChangeSoundMode}
+          onChangeMusicVolume={handleChangeMusicVolume}
+          onSelectTrack={(idx) => soundEngine.selectTrack(idx)}
+          onNextTrack={() => soundEngine.nextTrack()}
+        />
+
+        <main
+          className={`relative z-10 flex-1 flex flex-col justify-center ${
+            isAdmin ? 'pt-16' : 'pt-12 sm:pt-0'
+          }`}
+        >
+          {currentStep === AppStep.STEP_COVER && (
+            <StepCoverLanding
+              onStart={() => {
+                soundEngine.unlockAndStartIfEnabled();
+                soundEngine.playSoftTapSfx();
+                setCurrentStep(AppStep.STEP_A_QUESTION);
+              }}
+            />
+          )}
+
+          {currentStep === AppStep.STEP_A_QUESTION && (
+            <StepAIdentity
+              onBackToCover={() => {
+                soundEngine.playSoftTapSfx();
+                setCurrentStep(AppStep.STEP_COVER);
+              }}
+              onProceedToBirthday={() => {
+                soundEngine.playSoftTapSfx();
+                setCurrentStep(AppStep.STEP_B_BIRTHDAY);
+              }}
+            />
+          )}
+
+          {currentStep === AppStep.STEP_B_BIRTHDAY && (
+            <StepBBirthday
+              onBack={() => {
+                soundEngine.playSoftTapSfx();
+                setCurrentStep(AppStep.STEP_A_QUESTION);
+              }}
+              onVerified={() => {
+                soundEngine.playSoftTapSfx();
+                setIsAdmin(false);
+                setCurrentStep(AppStep.STEP_C_DESK);
+              }}
+              onAdminVerified={() => {
+                soundEngine.playSoftTapSfx();
+                setIsAdmin(true);
+                setCurrentStep(AppStep.STEP_C_DESK);
+              }}
+            />
+          )}
+
+          {currentStep === AppStep.STEP_C_DESK && (
+            <StepCDesk
+              isAdmin={isAdmin}
+              ownerLetters={ownerLetters}
+              currentDraft={draft}
+              sentLetters={sentLetters}
+              onSaveOwnerLetter={handleSaveOwnerLetter}
+              onDeleteExtraOwnerLetter={handleDeleteExtraOwnerLetter}
+              onResetOwnerLetters={handleResetOwnerLetters}
+              onAdminSaveReplyLetter={handleAdminSaveReplyLetter}
+              onAdminDeleteReplyLetter={handleAdminDeleteReplyLetter}
+              onReturnToCover={() => {
+                soundEngine.playSoftTapSfx();
+                setCurrentStep(AppStep.STEP_COVER);
+              }}
+              onExitAdminMode={() => setIsAdmin(false)}
+              onContinueOrStartReply={handleContinueOrStartReply}
+              onStartNewReply={handleStartNewReply}
+              onEditSpecificReply={handleEditSpecificReply}
+            />
+          )}
+
+          {currentStep === AppStep.STEP_D_REPLY && (
+            <StepDWriteReply
+              draft={draft}
+              onUpdateDraftField={handleUpdateDraftField}
+              saveStatus={saveStatus}
+              statusMessage={statusMessage}
+              onManualRetrySave={() => {
+                retryCountRef.current = 0;
+                void executeSave(false);
+              }}
+              onRequestClearDraft={handleClearDraft}
+              onBackToDesk={() => setCurrentStep(AppStep.STEP_C_DESK)}
+              onFinishAndFold={() => {
+                void handleFinishAndFold();
+              }}
+            />
+          )}
+
+          {currentStep === AppStep.STEP_E_FOLD && (
+            <StepEFoldEnvelope
+              draft={draft}
+              saveStatus={saveStatus}
+              statusMessage={statusMessage}
+              isCurrentVersionConfirmedSaved={isCurrentVersionConfirmedSaved}
+              onRetryFinalSave={() => {
+                retryCountRef.current = 0;
+                void executeSave(true);
+              }}
+              onBackToEditReply={() => setCurrentStep(AppStep.STEP_D_REPLY)}
+              onWriteAnotherLetter={handleStartNewReply}
+              onReturnToDesk={() => setCurrentStep(AppStep.STEP_C_DESK)}
+            />
+          )}
+        </main>
       </div>
-
-      {/* ปุ่มควบคุมเสียงบรรยากาศมุมขวาบน */}
-      <SoundControlBar
-        soundMode={soundMode}
-        isAudioUnlocked={isAudioUnlocked}
-        onChangeSoundMode={handleChangeSoundMode}
-      />
-
-      {/* เนื้อหาหลักลอยอยู่เหนือฉากหลัง */}
-      <main className="relative z-10 flex-1 flex flex-col justify-center pt-12 sm:pt-0">
-        {currentStep === AppStep.STEP_COVER && (
-          <StepCoverLanding
-            onStart={() => {
-              soundEngine.unlockAndStartIfEnabled();
-              setIsAudioUnlocked(soundEngine.getIsUnlocked());
-              soundEngine.playSoftTapSfx();
-              setCurrentStep(AppStep.STEP_A_QUESTION);
-            }}
-          />
-        )}
-
-        {currentStep === AppStep.STEP_A_QUESTION && (
-          <StepAIdentity
-            onBackToCover={() => {
-              soundEngine.playSoftTapSfx();
-              setCurrentStep(AppStep.STEP_COVER);
-            }}
-            onProceedToBirthday={() => {
-              soundEngine.playSoftTapSfx();
-              setCurrentStep(AppStep.STEP_B_BIRTHDAY);
-            }}
-          />
-        )}
-
-        {currentStep === AppStep.STEP_B_BIRTHDAY && (
-          <StepBBirthday
-            onBack={() => {
-              soundEngine.playSoftTapSfx();
-              setCurrentStep(AppStep.STEP_A_QUESTION);
-            }}
-            onVerified={() => {
-              soundEngine.playSoftTapSfx();
-              setCurrentStep(AppStep.STEP_C_DESK);
-            }}
-          />
-        )}
-
-        {currentStep === AppStep.STEP_C_DESK && (
-          <StepCDesk
-            currentDraft={draft}
-            sentLetters={sentLetters}
-            onContinueOrStartReply={handleContinueOrStartReply}
-            onStartNewReply={handleStartNewReply}
-            onEditSpecificReply={handleEditSpecificReply}
-          />
-        )}
-
-        {currentStep === AppStep.STEP_D_REPLY && (
-          <StepDWriteReply
-            draft={draft}
-            onUpdateDraftField={handleUpdateDraftField}
-            saveStatus={saveStatus}
-            statusMessage={statusMessage}
-            onManualRetrySave={() => {
-              retryCountRef.current = 0;
-              void executeSave(false);
-            }}
-            onRequestClearDraft={handleClearDraft}
-            onBackToDesk={() => setCurrentStep(AppStep.STEP_C_DESK)}
-            onFinishAndFold={() => {
-              void handleFinishAndFold();
-            }}
-          />
-        )}
-
-        {currentStep === AppStep.STEP_E_FOLD && (
-          <StepEFoldEnvelope
-            draft={draft}
-            saveStatus={saveStatus}
-            statusMessage={statusMessage}
-            isCurrentVersionConfirmedSaved={isCurrentVersionConfirmedSaved}
-            onRetryFinalSave={() => {
-              retryCountRef.current = 0;
-              void executeSave(true);
-            }}
-            onBackToEditReply={() => setCurrentStep(AppStep.STEP_D_REPLY)}
-            onWriteAnotherLetter={handleStartNewReply}
-            onReturnToDesk={() => setCurrentStep(AppStep.STEP_C_DESK)}
-          />
-        )}
-      </main>
-    </div>
+    </SiteCopyContext.Provider>
   );
 }

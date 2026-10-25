@@ -2,6 +2,12 @@
  * ไฟล์ตัวอย่างการตั้งค่า (Configuration)
  */
 
+export interface BgmTrack {
+  id: string;
+  title: string;
+  url: string;
+}
+
 export interface AppConfig {
   /** URL ของ Google Apps Script Web App (/exec) เพื่อให้ผู้รับบันทึกจดหมายได้ทันทีโดยไม่ต้องล็อกอิน */
   gasWebAppUrl: string;
@@ -19,7 +25,6 @@ export interface AppConfig {
   targetDriveFolderId: string;
   /**
    * ระบุภาพอ้างอิงต้นฉบับ (หากผู้สร้างอัปโหลดไว้ใน public/assets/)
-   * หากเป็นค่าว่าง ระบบจะแสดงภาพวาดเส้น SVG แบบ Placeholder ที่เปลี่ยนแทนได้ทันที
    */
   customVisualAssets: {
     deskBackgroundUrl: string;
@@ -28,19 +33,16 @@ export interface AppConfig {
     handDrawnPenUrl: string;
     letterPaperTextureUrl: string;
   };
-  /**
-   * (ตัวเลือกเสริม) หากต้องการใช้ไฟล์เพลง MP3 ของตัวเอง ให้วางไฟล์ในโฟลเดอร์ public/ เช่น public/bgm.mp3
-   * แล้วใส่ค่า './bgm.mp3' ที่นี่ หากปล่อยว่าง ระบบจะเล่นเสียงเปียโนอุ่น ๆ และเสียงฝนในตัวอัตโนมัติ
-   */
-  customBgmUrl: string;
+  /** รายการเพลงประกอบในเว็บไซต์ (เล่นต่อเนื่องอัตโนมัติและกดเปลี่ยนเพลงได้) */
+  bgmTracks: BgmTrack[];
 }
 
 export const EXAMPLE_CONFIG: AppConfig = {
   gasWebAppUrl:
     'https://script.google.com/macros/s/AKfycbz-_981ryzMDjbf8nwtNN2L1RcvnyhR2rqS7hoeMO8C7-gKZEV9LpQhdARed4OTMLn4lA/exec',
   autosaveDebounceMs: 1500,
-  maxBodyLength: 5000,
-  maxTitleLength: 120,
+  maxBodyLength: 8000,
+  maxTitleLength: 140,
   maxAuthorLength: 80,
   maxRetryAttempts: 4,
   targetDriveFolderId: '1UAt0ShaC67RVu1_4Ec58evFAUV4nTEGd',
@@ -51,5 +53,21 @@ export const EXAMPLE_CONFIG: AppConfig = {
     handDrawnPenUrl: '',
     letterPaperTextureUrl: '',
   },
-  customBgmUrl: '',
+  bgmTracks: [
+    {
+      id: 'track_maxmillor',
+      title: 'MaxMillor x ize so cold x PORZAX',
+      url: 'assets/aistudio/Y2Mate.st_-_MaxMillor_x_ize_so_cold_x_PORZAX_-__Official_MV_454c64b5.mp3',
+    },
+    {
+      id: 'track_unfriend',
+      title: 'Unfriend',
+      url: 'assets/aistudio/Y2Mate.st_-_Unfriend_caf2af8e.mp3',
+    },
+    {
+      id: 'track_cornboi',
+      title: 'ขอโทษที่ทำให้เสียใจ — CORNBOI',
+      url: 'assets/aistudio/Y2Mate.st_-__-_CORNBOIOfficial_Visualizer_d2f88adc.mp3',
+    },
+  ],
 };

@@ -26,13 +26,32 @@ var CONFIG = {
 };
 
 /**
- * ป้องกันการเปิดอ่านจดหมายผ่าน GET URL สาธารณะ
+ * ป้องกันการเปิดอ่านจดหมายตอบกลับของผู้รับผ่าน GET URL สาธารณะ
+ * (อนุญาตให้คืนเฉพาะจดหมายหน้าโต๊ะที่แอดมินตั้งค่าไว้เท่านั้น)
  */
 function doGet() {
+  var ownerLetters = null;
+  var siteCopy = null;
+  try {
+    var props = PropertiesService.getScriptProperties();
+    var rawOwner = props.getProperty('PUBLIC_OWNER_LETTERS_JSON');
+    if (rawOwner) {
+      ownerLetters = JSON.parse(rawOwner);
+    }
+    var rawCopy = props.getProperty('PUBLIC_SITE_COPY_JSON');
+    if (rawCopy) {
+      siteCopy = JSON.parse(rawCopy);
+    }
+  } catch (e) {
+    ownerLetters = null;
+  }
+
   return createJsonResponse({
     ok: true,
     service: 'to-you-private-letter-relay',
-    message: 'ระบบพร้อมรับจดหมายผ่าน POST เท่านั้น (ไม่อนุญาตการอ่านรายการจดหมายผ่านลิงก์สาธารณะ)'
+    ownerLetters: ownerLetters,
+    siteCopy: siteCopy,
+    message: 'ระบบพร้อมรับจดหมายผ่าน POST เท่านั้น (ไม่อนุญาตการอ่านจดหมายตอบกลับส่วนตัวผ่านลิงก์สาธารณะ)'
   });
 }
 
@@ -122,6 +141,18 @@ function doPost(e) {
       }
 
       var scriptProps = PropertiesService.getScriptProperties();
+      if (letterId.indexOf('ltr_owner_') === 0) {
+        try {
+          if (Array.isArray(payload.ownerLetters)) {
+            scriptProps.setProperty('PUBLIC_OWNER_LETTERS_JSON', JSON.stringify(payload.ownerLetters));
+          }
+          if (payload.siteCopy && typeof payload.siteCopy === 'object') {
+            scriptProps.setProperty('PUBLIC_SITE_COPY_JSON', JSON.stringify(payload.siteCopy));
+          }
+        } catch (propErr) {
+          // Ignore property quota limit if exceeded
+        }
+      }
       var storage = getOrCreatePrivateStorage(scriptProps);
       var folder = storage.folder;
       var sheet = storage.indexSheet;

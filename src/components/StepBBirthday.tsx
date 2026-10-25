@@ -1,18 +1,26 @@
 import React, { useMemo, useState } from 'react';
-import { TARGET_BIRTHDAY } from '../config';
-import { THAI_MONTHS, UI_COPY } from '../content/letters';
+import { ADMIN_BIRTHDAY_GATE, TARGET_BIRTHDAY } from '../config';
+import { THAI_MONTHS } from '../content/letters';
+import { useSiteCopy } from '../context/SiteCopyContext';
 import { Calendar, ArrowLeft } from 'lucide-react';
+import { soundEngine } from '../services/soundEngine';
 
 interface StepBBirthdayProps {
   onBack: () => void;
   onVerified: () => void;
+  onAdminVerified: () => void;
 }
 
 function getDaysInMonth(year: number, month: number): number {
   return new Date(year, month, 0).getDate();
 }
 
-export function StepBBirthday({ onBack, onVerified }: StepBBirthdayProps) {
+export function StepBBirthday({
+  onBack,
+  onVerified,
+  onAdminVerified,
+}: StepBBirthdayProps) {
+  const copy = useSiteCopy();
   const [selectedDay, setSelectedDay] = useState<number>(28);
   const [selectedMonth, setSelectedMonth] = useState<number>(10);
   const [selectedYear, setSelectedYear] = useState<number>(2005);
@@ -37,6 +45,7 @@ export function StepBBirthday({ onBack, onVerified }: StepBBirthdayProps) {
   }, [maxDayInCurrentMonth]);
 
   const handleMonthChange = (newMonth: number) => {
+    soundEngine.playSoftTapSfx();
     setSelectedMonth(newMonth);
     setErrorMessage('');
     const maxD = getDaysInMonth(selectedYear, newMonth);
@@ -46,6 +55,7 @@ export function StepBBirthday({ onBack, onVerified }: StepBBirthdayProps) {
   };
 
   const handleYearChange = (newYear: number) => {
+    soundEngine.playSoftTapSfx();
     setSelectedYear(newYear);
     setErrorMessage('');
     const maxD = getDaysInMonth(newYear, selectedMonth);
@@ -57,6 +67,13 @@ export function StepBBirthday({ onBack, onVerified }: StepBBirthdayProps) {
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (
+      selectedDay === ADMIN_BIRTHDAY_GATE.day &&
+      selectedMonth === ADMIN_BIRTHDAY_GATE.month &&
+      selectedYear === ADMIN_BIRTHDAY_GATE.year
+    ) {
+      setErrorMessage('');
+      onAdminVerified();
+    } else if (
       selectedDay === TARGET_BIRTHDAY.day &&
       selectedMonth === TARGET_BIRTHDAY.month &&
       selectedYear === TARGET_BIRTHDAY.year
@@ -64,7 +81,7 @@ export function StepBBirthday({ onBack, onVerified }: StepBBirthdayProps) {
       setErrorMessage('');
       onVerified();
     } else {
-      setErrorMessage(UI_COPY.stepB.wrongDateMessage);
+      setErrorMessage(copy.stepB.wrongDateMessage);
     }
   };
 
@@ -77,13 +94,13 @@ export function StepBBirthday({ onBack, onVerified }: StepBBirthdayProps) {
           className="inline-flex items-center gap-2 min-h-[44px] px-3 py-2 text-sm text-[#E8DDD0]/85 hover:text-white transition-colors whitespace-nowrap shrink-0 cursor-pointer"
         >
           <ArrowLeft className="w-4 h-4" aria-hidden="true" />
-          <span>{UI_COPY.stepB.backBtn}</span>
+          <span>{copy.stepB.backBtn}</span>
         </button>
       </div>
 
       <form
         onSubmit={handleSubmit}
-        className="flex-1 flex flex-col items-center justify-center space-y-7 py-8"
+        className="animate-scene-enter flex-1 flex flex-col items-center justify-center space-y-7 py-8"
       >
         <div className="inline-flex items-center gap-3">
           <Calendar className="w-6 h-6 text-[#F0D5A8]" aria-hidden="true" />
@@ -91,12 +108,12 @@ export function StepBBirthday({ onBack, onVerified }: StepBBirthdayProps) {
             className="font-display text-2xl sm:text-3xl font-semibold text-[#F6EFE6] drop-shadow-[0_3px_16px_rgba(0,0,0,0.9)]"
             style={{ textWrap: 'balance' }}
           >
-            {UI_COPY.stepB.question}
+            {copy.stepB.question}
           </h1>
         </div>
 
         {/* แถวตัวเลือก วัน / เดือน / ปี ทรงแคปซูลโปร่งแสงตามภาพอ้างอิง */}
-        <div className="grid grid-cols-3 gap-2.5 sm:gap-4 w-full max-w-md">
+        <div className="animate-scene-enter-delay-1 grid grid-cols-3 gap-2.5 sm:gap-4 w-full max-w-md">
           <div>
             <label htmlFor="bday-day" className="sr-only">
               วันที่
@@ -105,10 +122,11 @@ export function StepBBirthday({ onBack, onVerified }: StepBBirthdayProps) {
               id="bday-day"
               value={selectedDay}
               onChange={(e) => {
+                soundEngine.playSoftTapSfx();
                 setSelectedDay(Number(e.target.value));
                 setErrorMessage('');
               }}
-              className="w-full min-h-[46px] px-3.5 py-2 bg-[#1B1511]/80 backdrop-blur-md border border-[#E8DDD0]/45 rounded-full text-sm sm:text-base text-[#F6EFE6] tabular-nums focus:outline-none focus:border-[#F6EFE6] cursor-pointer"
+              className="w-full min-h-[46px] px-3.5 py-2 bg-[#1B1511]/80 backdrop-blur-md border border-[#E8DDD0]/45 hover:border-[#F6EFE6]/80 rounded-full text-sm sm:text-base text-[#F6EFE6] tabular-nums transition-colors focus:outline-none focus:border-[#F5CA7B] cursor-pointer"
             >
               {days.map((d) => (
                 <option key={d} value={d} className="bg-[#1E1712] text-[#F6EFE6]">
@@ -126,7 +144,7 @@ export function StepBBirthday({ onBack, onVerified }: StepBBirthdayProps) {
               id="bday-month"
               value={selectedMonth}
               onChange={(e) => handleMonthChange(Number(e.target.value))}
-              className="w-full min-h-[46px] px-3.5 py-2 bg-[#1B1511]/80 backdrop-blur-md border border-[#E8DDD0]/45 rounded-full text-sm sm:text-base text-[#F6EFE6] focus:outline-none focus:border-[#F6EFE6] cursor-pointer"
+              className="w-full min-h-[46px] px-3.5 py-2 bg-[#1B1511]/80 backdrop-blur-md border border-[#E8DDD0]/45 hover:border-[#F6EFE6]/80 rounded-full text-sm sm:text-base text-[#F6EFE6] transition-colors focus:outline-none focus:border-[#F5CA7B] cursor-pointer"
             >
               {THAI_MONTHS.map((m) => (
                 <option
@@ -148,7 +166,7 @@ export function StepBBirthday({ onBack, onVerified }: StepBBirthdayProps) {
               id="bday-year"
               value={selectedYear}
               onChange={(e) => handleYearChange(Number(e.target.value))}
-              className="w-full min-h-[46px] px-3.5 py-2 bg-[#1B1511]/80 backdrop-blur-md border border-[#E8DDD0]/45 rounded-full text-sm sm:text-base text-[#F6EFE6] tabular-nums focus:outline-none focus:border-[#F6EFE6] cursor-pointer"
+              className="w-full min-h-[46px] px-3.5 py-2 bg-[#1B1511]/80 backdrop-blur-md border border-[#E8DDD0]/45 hover:border-[#F6EFE6]/80 rounded-full text-sm sm:text-base text-[#F6EFE6] tabular-nums transition-colors focus:outline-none focus:border-[#F5CA7B] cursor-pointer"
             >
               {years.map((y) => (
                 <option key={y} value={y} className="bg-[#1E1712] text-[#F6EFE6]">
@@ -159,25 +177,25 @@ export function StepBBirthday({ onBack, onVerified }: StepBBirthdayProps) {
           </div>
         </div>
 
-        <p className="text-xs text-[#E8DDD0]/70">
+        <p className="animate-scene-enter-delay-1 text-xs text-[#E8DDD0]/70">
           รองรับการเลือกปี ค.ศ. {TARGET_BIRTHDAY.minYear} – {TARGET_BIRTHDAY.maxYear}
         </p>
 
         {errorMessage && (
           <div
             role="alert"
-            className="max-w-md px-5 py-3.5 rounded-2xl bg-[#381814]/85 backdrop-blur-md border border-[#E5988E]/50 text-sm text-[#FADCD8] text-center leading-relaxed"
+            className="animate-scene-enter max-w-md px-5 py-3.5 rounded-2xl bg-[#381814]/85 backdrop-blur-md border border-[#E5988E]/50 text-sm text-[#FADCD8] text-center leading-relaxed"
           >
             {errorMessage}
           </div>
         )}
 
-        <div className="pt-2">
+        <div className="animate-scene-enter-delay-2 pt-2">
           <button
             type="submit"
-            className="night-glass-btn min-w-[150px] min-h-[48px] px-9 py-2.5 text-base font-medium whitespace-nowrap shrink-0 cursor-pointer"
+            className="night-glass-btn-active min-w-[156px] min-h-[48px] px-9 py-2.5 text-base font-medium whitespace-nowrap shrink-0 cursor-pointer"
           >
-            {UI_COPY.stepB.submitBtn}
+            {copy.stepB.submitBtn}
           </button>
         </div>
       </form>

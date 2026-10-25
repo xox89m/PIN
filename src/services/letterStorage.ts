@@ -1,4 +1,11 @@
 import { APP_CONFIG } from '../config';
+import {
+  APOLOGY_LETTER_CONTENT,
+  BIRTHDAY_LETTER_CONTENT,
+  LetterDocument,
+  SiteCopy,
+  UI_COPY,
+} from '../content/letters';
 
 export enum SaveStatus {
   UNSAVED = 'unsaved',
@@ -25,25 +32,120 @@ export interface SaveBackendResponse {
   letterId: string;
   version: number;
   savedAt: string;
+  note?: string;
   errorCode?: string;
   message?: string;
 }
 
 const LOCAL_DRAFT_STORAGE_KEY = 'to_you_reply_draft_v1';
 const LOCAL_SENT_HISTORY_KEY = 'to_you_sent_letters_box_v1';
+const LOCAL_OWNER_LETTERS_KEY = 'to_you_owner_letters_v2';
+const LOCAL_OWNER_VERSIONS_KEY = 'to_you_owner_letter_versions_v1';
 
-function generateSecureId(): string {
+export function getDefaultOwnerLetters(): LetterDocument[] {
+  return [
+    { ...APOLOGY_LETTER_CONTENT, paragraphs: [...APOLOGY_LETTER_CONTENT.paragraphs] },
+    { ...BIRTHDAY_LETTER_CONTENT, paragraphs: [...BIRTHDAY_LETTER_CONTENT.paragraphs] },
+  ];
+}
+
+function isValidLetterDocument(val: unknown): val is LetterDocument {
+  if (!val || typeof val !== 'object') return false;
+  const obj = val as Record<string, unknown>;
+  return (
+    typeof obj.id === 'string' &&
+    obj.id.trim().length > 0 &&
+    typeof obj.letterTitle === 'string' &&
+    typeof obj.senderLabel === 'string' &&
+    typeof obj.dateLabel === 'string' &&
+    typeof obj.salutation === 'string' &&
+    Array.isArray(obj.paragraphs) &&
+    typeof obj.signOff === 'string' &&
+    typeof obj.senderName === 'string'
+  );
+}
+
+export function loadOwnerLettersFromLocal(): LetterDocument[] {
+  try {
+    const raw = localStorage.getItem(LOCAL_OWNER_LETTERS_KEY);
+    if (!raw) return getDefaultOwnerLetters();
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return getDefaultOwnerLetters();
+    const valid = parsed.filter(isValidLetterDocument);
+    if (valid.length === 0) return getDefaultOwnerLetters();
+
+    // รับประกันว่ามีซองหลัก apology และ birthday อยู่เสมอ
+    const hasApology = valid.some((d) => d.id === 'apology');
+    const hasBirthday = valid.some((d) => d.id === 'birthday');
+    const result = [...valid];
+    if (!hasBirthday) {
+      result.unshift({
+        ...BIRTHDAY_LETTER_CONTENT,
+        paragraphs: [...BIRTHDAY_LETTER_CONTENT.paragraphs],
+      });
+    }
+    if (!hasApology) {
+      result.unshift({
+        ...APOLOGY_LETTER_CONTENT,
+        paragraphs: [...APOLOGY_LETTER_CONTENT.paragraphs],
+      });
+    }
+    return result;
+  } catch {
+    return getDefaultOwnerLetters();
+  }
+}
+
+export function saveOwnerLettersToLocal(letters: LetterDocument[]): void {
+  try {
+    localStorage.setItem(LOCAL_OWNER_LETTERS_KEY, JSON.stringify(letters));
+  } catch {
+    // Ignore quota / private browsing errors
+  }
+}
+
+export function resetOwnerLettersInLocal(): LetterDocument[] {
+  try {
+    localStorage.removeItem(LOCAL_OWNER_LETTERS_KEY);
+  } catch {
+    // Ignore
+  }
+  return getDefaultOwnerLetters();
+}
+
+function getNextOwnerLetterVersion(docId: string, minVersion = 1): number {
+  let map: Record<string, number> = {};
+  try {
+    const raw = localStorage.getItem(LOCAL_OWNER_VERSIONS_KEY);
+    if (raw) {
+      map = JSON.parse(raw) as Record<string, number>;
+    }
+  } catch {
+    map = {};
+  }
+  const current = typeof map[docId] === 'number' ? map[docId] : 0;
+  const next = Math.min(99999, Math.max(current + 1, minVersion));
+  map[docId] = next;
+  try {
+    localStorage.setItem(LOCAL_OWNER_VERSIONS_KEY, JSON.stringify(map));
+  } catch {
+    // Ignore
+  }
+  return next;
+}
+
+export function generateSecureId(prefix = 'ltr'): string {
   const bytes = new Uint8Array(12);
   crypto.getRandomValues(bytes);
   const hex = Array.from(bytes)
     .map((b) => b.toString(16).padStart(2, '0'))
     .join('');
-  return `ltr_${hex}`;
+  return `${prefix}_${hex}`;
 }
 
 export function createInitialDraft(): ReplyLetterDraft {
   return {
-    letterId: generateSecureId(),
+    letterId: generateSecureId('ltr'),
     title: '',
     author: '',
     body: '',
@@ -107,10 +209,6 @@ export function clearLocalDraft(): ReplyLetterDraft {
   return createInitialDraft();
 }
 
-/**
- * โหลดและบันทึกรายการจดหมายตอบกลับที่เขียนในเครื่องนี้ เพื่อแสดงจำนวนและรายชื่อใน "กล่องจดหมาย" ด้านข้าง
- * (ข้อมูลเก็บเฉพาะในเบราว์เซอร์เครื่องผู้เขียน ไม่ดึงจดหมายคนอื่นจากเซิร์ฟเวอร์เพื่อรักษาความเป็นส่วนตัว)
- */
 export function loadLocalSentHistory(): ReplyLetterDraft[] {
   try {
     const raw = localStorage.getItem(LOCAL_SENT_HISTORY_KEY);
@@ -170,9 +268,10 @@ export function buildIdempotencyKey(letterId: string, version: number): string {
 export async function saveViaGasWebApp(params: {
   draft: ReplyLetterDraft;
   isFinalFold?: boolean;
+  ownerLettersSnapshot?: LetterDocument[];
   signal?: AbortSignal;
 }): Promise<SaveBackendResponse> {
-  const { draft, isFinalFold = false, signal } = params;
+  const { draft, isFinalFold = false, ownerLettersSnapshot, signal } = params;
   const gasUrl = APP_CONFIG.gasWebAppUrl;
 
   if (!gasUrl || !gasUrl.startsWith('https://script.google.com/')) {
@@ -186,17 +285,21 @@ export async function saveViaGasWebApp(params: {
     };
   }
 
-  const payload = {
+  const payload: Record<string, unknown> = {
     action: 'saveLetter',
     idempotencyKey: buildIdempotencyKey(draft.letterId, draft.version),
     letterId: draft.letterId,
-    title: draft.title.slice(0, APP_CONFIG.maxTitleLength),
+    title: draft.title.slice(0, 120),
     author: draft.author.slice(0, APP_CONFIG.maxAuthorLength),
-    body: draft.body.slice(0, APP_CONFIG.maxBodyLength),
+    body: draft.body.slice(0, 5000),
     version: draft.version,
     recoveryState: isFinalFold ? 'completed' : 'synced',
     clientTimestamp: new Date().toISOString(),
   };
+
+  if (ownerLettersSnapshot) {
+    payload.ownerLetters = ownerLettersSnapshot;
+  }
 
   const response = await fetch(gasUrl, {
     method: 'POST',
@@ -223,6 +326,7 @@ export async function saveViaGasWebApp(params: {
     letterId?: string;
     version?: number;
     savedAt?: string;
+    note?: string;
     errorCode?: string;
     message?: string;
   };
@@ -243,5 +347,207 @@ export async function saveViaGasWebApp(params: {
     letterId: data.letterId || draft.letterId,
     version: typeof data.version === 'number' ? data.version : draft.version,
     savedAt: data.savedAt || new Date().toISOString(),
+    note: data.note,
   };
+}
+
+/**
+ * บันทึกจดหมายของแอดมินลงใน Google Drive อัตโนมัติ พร้อมรองรับการซิงก์ข้ามอุปกรณ์เมื่ออัปเดต Code.gs
+ */
+export async function syncAdminOwnerLetterToDrive(
+  doc: LetterDocument,
+  allOwnerLetters: LetterDocument[]
+): Promise<boolean> {
+  const cleanSuffix = doc.id.replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 40) || 'doc';
+  const letterId = `ltr_owner_${cleanSuffix}`;
+  const fullBody = [
+    doc.salutation,
+    '',
+    ...doc.paragraphs,
+    '',
+    doc.signOff,
+    doc.senderName,
+  ].join('\n\n');
+
+  let version = getNextOwnerLetterVersion(doc.id);
+
+  try {
+    let res = await saveViaGasWebApp({
+      draft: {
+        letterId,
+        title: doc.letterTitle,
+        author: `${doc.senderName} (${doc.dateLabel})`,
+        body: fullBody,
+        version,
+        lastModifiedIso: new Date().toISOString(),
+        lastSavedVersion: 0,
+        lastSavedIso: null,
+        recoveryState: 'completed',
+      },
+      isFinalFold: true,
+      ownerLettersSnapshot: allOwnerLetters,
+    });
+
+    if (res.ok && res.note === 'newer_version_already_saved' && res.version >= version) {
+      version = getNextOwnerLetterVersion(doc.id, res.version + 1);
+      res = await saveViaGasWebApp({
+        draft: {
+          letterId,
+          title: doc.letterTitle,
+          author: `${doc.senderName} (${doc.dateLabel})`,
+          body: fullBody,
+          version,
+          lastModifiedIso: new Date().toISOString(),
+          lastSavedVersion: 0,
+          lastSavedIso: null,
+          recoveryState: 'completed',
+        },
+        isFinalFold: true,
+        ownerLettersSnapshot: allOwnerLetters,
+      });
+    }
+
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
+const LOCAL_SITE_COPY_KEY = 'to_you_site_copy_v1';
+
+export function mergeWithDefaultSiteCopy(partial: unknown): SiteCopy {
+  if (!partial || typeof partial !== 'object') {
+    return structuredClone(UI_COPY);
+  }
+  const p = partial as Partial<SiteCopy>;
+  return {
+    siteTitle: typeof p.siteTitle === 'string' ? p.siteTitle : UI_COPY.siteTitle,
+    cover: { ...UI_COPY.cover, ...(p.cover || {}) },
+    stepA: { ...UI_COPY.stepA, ...(p.stepA || {}) },
+    stepB: { ...UI_COPY.stepB, ...(p.stepB || {}) },
+    stepC: { ...UI_COPY.stepC, ...(p.stepC || {}) },
+    stepD: { ...UI_COPY.stepD, ...(p.stepD || {}) },
+    stepE: { ...UI_COPY.stepE, ...(p.stepE || {}) },
+  };
+}
+
+export function loadSiteCopyFromLocal(): SiteCopy {
+  try {
+    const raw = localStorage.getItem(LOCAL_SITE_COPY_KEY);
+    if (!raw) return structuredClone(UI_COPY);
+    return mergeWithDefaultSiteCopy(JSON.parse(raw));
+  } catch {
+    return structuredClone(UI_COPY);
+  }
+}
+
+export function saveSiteCopyToLocal(copy: SiteCopy): void {
+  try {
+    localStorage.setItem(LOCAL_SITE_COPY_KEY, JSON.stringify(copy));
+  } catch {
+    // Ignore
+  }
+}
+
+export function resetSiteCopyInLocal(): SiteCopy {
+  try {
+    localStorage.removeItem(LOCAL_SITE_COPY_KEY);
+  } catch {
+    // Ignore
+  }
+  return structuredClone(UI_COPY);
+}
+
+export async function syncAdminSiteCopyToDrive(copy: SiteCopy): Promise<boolean> {
+  const gasUrl = APP_CONFIG.gasWebAppUrl;
+  if (!gasUrl || !gasUrl.startsWith('https://script.google.com/')) {
+    return false;
+  }
+
+  let version = getNextOwnerLetterVersion('sitecopy');
+  const letterId = 'ltr_owner_sitecopy';
+  const bodyJson = JSON.stringify(copy, null, 2).slice(0, 4950);
+
+  const sendOnce = async (ver: number) => {
+    const payload = {
+      action: 'saveLetter',
+      idempotencyKey: buildIdempotencyKey(letterId, ver),
+      letterId,
+      title: `ข้อความหน้าเว็บไซต์ (${copy.siteTitle})`,
+      author: 'แอดมิน',
+      body: bodyJson,
+      version: ver,
+      recoveryState: 'completed',
+      siteCopy: copy,
+      clientTimestamp: new Date().toISOString(),
+    };
+
+    const res = await fetch(gasUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: JSON.stringify(payload),
+    });
+    if (!res.ok) return { ok: false, version: ver, note: '' };
+    return (await res.json()) as { ok?: boolean; version?: number; note?: string };
+  };
+
+  try {
+    let result = await sendOnce(version);
+    if (
+      result.ok &&
+      result.note === 'newer_version_already_saved' &&
+      typeof result.version === 'number' &&
+      result.version >= version
+    ) {
+      version = getNextOwnerLetterVersion('sitecopy', result.version + 1);
+      result = await sendOnce(version);
+    }
+    return Boolean(result.ok);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * โหลดจดหมายหลักและข้อความหน้าเว็บของแอดมินที่ซิงก์ไว้บน Cloud (หาก Code.gs รองรับ)
+ */
+export async function fetchOwnerConfigFromCloud(): Promise<{
+  ownerLetters: LetterDocument[] | null;
+  siteCopy: SiteCopy | null;
+}> {
+  const gasUrl = APP_CONFIG.gasWebAppUrl;
+  if (!gasUrl || !gasUrl.startsWith('https://script.google.com/')) {
+    return { ownerLetters: null, siteCopy: null };
+  }
+
+  try {
+    const res = await fetch(gasUrl, { method: 'GET' });
+    if (!res.ok) return { ownerLetters: null, siteCopy: null };
+    const data = (await res.json()) as {
+      ok?: boolean;
+      ownerLetters?: unknown[];
+      siteCopy?: unknown;
+    };
+
+    let ownerLetters: LetterDocument[] | null = null;
+    let siteCopy: SiteCopy | null = null;
+
+    if (data.ok && Array.isArray(data.ownerLetters)) {
+      const valid = data.ownerLetters.filter(isValidLetterDocument);
+      if (valid.length > 0) {
+        saveOwnerLettersToLocal(valid);
+        ownerLetters = valid;
+      }
+    }
+
+    if (data.ok && data.siteCopy && typeof data.siteCopy === 'object') {
+      const merged = mergeWithDefaultSiteCopy(data.siteCopy);
+      saveSiteCopyToLocal(merged);
+      siteCopy = merged;
+    }
+
+    return { ownerLetters, siteCopy };
+  } catch {
+    return { ownerLetters: null, siteCopy: null };
+  }
 }
