@@ -1,9 +1,13 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { SiteCopy } from '../content/letters';
+import { cloneSiteCopy } from '../services/letterStorage';
+import { PublishResult } from '../services/cloudConfigSync';
 import { soundEngine } from '../services/soundEngine';
 import {
+  AlertCircle,
   Check,
   ChevronDown,
+  Cloud,
   Eye,
   Home,
   Pencil,
@@ -17,9 +21,11 @@ export type StepKey = 'COVER' | 'A' | 'B' | 'C' | 'D' | 'E';
 interface AdminGlobalBarProps {
   currentStep: StepKey;
   siteCopy: SiteCopy;
+  isCloudAdminVerified: boolean;
+  onConnectCloudAdmin: () => Promise<PublishResult>;
   onJumpToStep: (step: StepKey) => void;
-  onSaveSiteCopy: (nextCopy: SiteCopy) => Promise<boolean>;
-  onResetSiteCopy: () => void;
+  onSaveSiteCopy: (nextCopy: SiteCopy) => Promise<PublishResult>;
+  onResetSiteCopy: () => Promise<PublishResult>;
   onExitAdminMode: () => void;
 }
 
@@ -49,6 +55,8 @@ const IGNORED_MODIFIER_KEYS = new Set([
 export function AdminGlobalBar({
   currentStep,
   siteCopy,
+  isCloudAdminVerified,
+  onConnectCloudAdmin,
   onJumpToStep,
   onSaveSiteCopy,
   onResetSiteCopy,
@@ -57,15 +65,17 @@ export function AdminGlobalBar({
   const [navMenuOpen, setNavMenuOpen] = useState(false);
   const [editorOpen, setEditorOpen] = useState(false);
   const [editingTab, setEditingTab] = useState<StepKey>(currentStep);
-  const [draftCopy, setDraftCopy] = useState<SiteCopy>(siteCopy);
+  const [draftCopy, setDraftCopy] = useState<SiteCopy>(() => cloneSiteCopy(siteCopy));
   const [isSaving, setIsSaving] = useState(false);
+  const [isConnecting, setIsConnecting] = useState(false);
   const [feedbackMsg, setFeedbackMsg] = useState('');
+  const [feedbackIsError, setFeedbackIsError] = useState(false);
   const [confirmReset, setConfirmReset] = useState(false);
 
   const navRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
-    setDraftCopy(siteCopy);
+    setDraftCopy(cloneSiteCopy(siteCopy));
   }, [siteCopy]);
 
   useEffect(() => {
@@ -83,9 +93,10 @@ export function AdminGlobalBar({
 
   const openCopyEditorForCurrentPage = () => {
     soundEngine.playPaperOpenSfx();
-    setDraftCopy(structuredClone(siteCopy));
+    setDraftCopy(cloneSiteCopy(siteCopy));
     setEditingTab(currentStep);
     setFeedbackMsg('');
+    setFeedbackIsError(false);
     setConfirmReset(false);
     setEditorOpen(true);
   };
@@ -102,15 +113,21 @@ export function AdminGlobalBar({
     e.preventDefault();
     setIsSaving(true);
     setFeedbackMsg('');
+    setFeedbackIsError(false);
     soundEngine.playSoftTapSfx();
 
-    const synced = await onSaveSiteCopy(draftCopy);
+    const res = await onSaveSiteCopy(draftCopy);
     setIsSaving(false);
-    setFeedbackMsg(
-      synced
-        ? 'บันทึกคำในหน้าเว็บและสำรองลง Google Drive เรียบร้อยแล้ว'
-        : 'บันทึกคำในหน้าเว็บลงเครื่องเรียบร้อยแล้ว'
-    );
+    if (res.ok) {
+      setFeedbackIsError(false);
+      setFeedbackMsg('บันทึกและเผยแพร่ออนไลน์สำเร็จ! ทุกคนที่เข้าเว็บจะเห็นข้อความนี้ตรงกันทันที');
+    } else {
+      setFeedbackIsError(true);
+      setFeedbackMsg(
+        res.errorMessage ||
+          'บันทึกไว้ในเครื่องแล้ว แต่ยังไม่ได้เผยแพร่ออนไลน์ กรุณากดบันทึกอีกครั้ง'
+      );
+    }
   };
 
   const renderField = (
@@ -251,6 +268,32 @@ export function AdminGlobalBar({
             </div>
           )}
         </div>
+
+        {/* สถานะซิงก์ให้ทุกคนเห็นตรงกัน */}
+        {isCloudAdminVerified ? (
+          <span className="hidden md:inline-flex items-center gap-1.5 px-3 py-1.5 text-xs text-[#C6F2D2]">
+            <Cloud className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
+            <span>ซิงก์ออนไลน์พร้อมแล้ว</span>
+          </span>
+        ) : (
+          <button
+            type="button"
+            disabled={isConnecting}
+            onClick={() => {
+              setIsConnecting(true);
+              soundEngine.playSoftTapSfx();
+              void onConnectCloudAdmin().finally(() => {
+                setIsConnecting(false);
+              });
+            }}
+            className="night-glass-btn inline-flex items-center gap-1.5 min-h-[42px] px-3 py-2 text-xs font-medium whitespace-nowrap cursor-pointer shadow-lg text-[#F7DFB2]"
+          >
+            <Cloud className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
+            <span>
+              {isConnecting ? 'กำลังเชื่อมต่อ...' : 'เชื่อมต่อเพื่อซิงก์ให้ทุกคนเห็น'}
+            </span>
+          </button>
+        )}
       </div>
 
       {/* หน้าต่างแก้ไขคำพูดทุกหน้าสำหรับแอดมิน */}
@@ -883,8 +926,16 @@ export function AdminGlobalBar({
               )}
 
               {feedbackMsg && (
-                <p className="text-xs sm:text-sm font-semibold text-[#1F5129] flex items-center gap-1.5 pt-1">
-                  <Check className="w-4 h-4 shrink-0" aria-hidden="true" />
+                <p
+                  className={`text-xs sm:text-sm font-semibold flex items-start gap-1.5 pt-1 ${
+                    feedbackIsError ? 'text-[#85271D]' : 'text-[#1F5129]'
+                  }`}
+                >
+                  {feedbackIsError ? (
+                    <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" aria-hidden="true" />
+                  ) : (
+                    <Check className="w-4 h-4 shrink-0 mt-0.5" aria-hidden="true" />
+                  )}
                   <span>{feedbackMsg}</span>
                 </p>
               )}
@@ -904,12 +955,21 @@ export function AdminGlobalBar({
                   <div className="flex items-center gap-2">
                     <button
                       type="button"
+                      disabled={isSaving}
                       onClick={() => {
-                        onResetSiteCopy();
+                        setIsSaving(true);
                         setConfirmReset(false);
-                        setFeedbackMsg('คืนค่าคำพูดทุกหน้ากลับเป็นต้นฉบับแล้ว');
+                        void onResetSiteCopy().then((res) => {
+                          setIsSaving(false);
+                          setFeedbackIsError(!res.ok);
+                          setFeedbackMsg(
+                            res.ok
+                              ? 'คืนค่าคำพูดทุกหน้าเป็นต้นฉบับและอัปเดตให้ทุกคนเห็นแล้ว'
+                              : res.errorMessage || 'คืนค่าในเครื่องแล้ว กดบันทึกเพื่อซิงก์ออนไลน์'
+                          );
+                        });
                       }}
-                      className="min-h-[38px] px-3.5 py-1.5 rounded-full bg-[#8F2D22] text-white text-xs font-semibold cursor-pointer"
+                      className="min-h-[38px] px-3.5 py-1.5 rounded-full bg-[#8F2D22] text-white text-xs font-semibold cursor-pointer disabled:opacity-50"
                     >
                       ยืนยันคืนค่าคำต้นฉบับ
                     </button>

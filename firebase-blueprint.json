@@ -1,0 +1,200 @@
+{
+  "entities": {
+    "AdminRole": {
+      "title": "AdminRole",
+      "description": "Trusted administrator membership record keyed by Firebase Auth UID.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_.:-]+$",
+          "description": "Firebase Auth UID of the administrator."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when admin record was created."
+        }
+      },
+      "required": ["uid", "createdAt"]
+    },
+    "PublishedSiteConfig": {
+      "title": "PublishedSiteConfig",
+      "description": "Live website copy across all 6 steps and ordered list of published owner letter IDs visible to all visitors.",
+      "type": "object",
+      "properties": {
+        "configId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 32,
+          "pattern": "^[a-zA-Z0-9_-]+$",
+          "description": "Canonical configuration document ID (live_site)."
+        },
+        "authorUid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_.:-]+$",
+          "description": "UID of the verified admin who published the update."
+        },
+        "letterOrderIds": {
+          "type": "array",
+          "description": "Ordered list of published owner letter IDs (1 to 30 items)."
+        },
+        "siteTitle": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200,
+          "description": "Main website title."
+        },
+        "cover": {
+          "type": "object",
+          "description": "Cover step UI copy fields."
+        },
+        "stepA": {
+          "type": "object",
+          "description": "Step A identity confirmation UI copy fields."
+        },
+        "stepB": {
+          "type": "object",
+          "description": "Step B birthday gate UI copy fields."
+        },
+        "stepC": {
+          "type": "object",
+          "description": "Step C letter desk UI copy fields."
+        },
+        "stepD": {
+          "type": "object",
+          "description": "Step D reply editor UI copy fields."
+        },
+        "stepE": {
+          "type": "object",
+          "description": "Step E envelope folding UI copy fields."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Immutable server creation timestamp."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server last-modified timestamp."
+        }
+      },
+      "required": [
+        "configId",
+        "authorUid",
+        "letterOrderIds",
+        "siteTitle",
+        "cover",
+        "stepA",
+        "stepB",
+        "stepC",
+        "stepD",
+        "stepE",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "PublishedLetter": {
+      "title": "PublishedLetter",
+      "description": "Public owner letter displayed on the letter desk and mailbox for all visitors.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[a-zA-Z0-9_-]+$",
+          "description": "Unique letter identifier matching the document ID."
+        },
+        "authorUid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_.:-]+$",
+          "description": "UID of the verified admin who saved this letter."
+        },
+        "isOwnerApprovedForProduction": {
+          "type": "boolean",
+          "description": "Whether the letter is approved for production display."
+        },
+        "letterTitle": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200,
+          "description": "Title of the envelope/letter."
+        },
+        "senderLabel": {
+          "type": "string",
+          "maxLength": 120,
+          "description": "Sender label displayed on the envelope."
+        },
+        "dateLabel": {
+          "type": "string",
+          "maxLength": 120,
+          "description": "Date or recipient label displayed on the letter."
+        },
+        "salutation": {
+          "type": "string",
+          "maxLength": 300,
+          "description": "Opening greeting of the letter."
+        },
+        "paragraphs": {
+          "type": "array",
+          "description": "Bounded list of paragraph strings (1 to 80 paragraphs)."
+        },
+        "signOff": {
+          "type": "string",
+          "maxLength": 200,
+          "description": "Closing sign-off phrase."
+        },
+        "senderName": {
+          "type": "string",
+          "maxLength": 120,
+          "description": "Sender signature name."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Immutable server creation timestamp."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server last-modified timestamp."
+        }
+      },
+      "required": [
+        "id",
+        "authorUid",
+        "isOwnerApprovedForProduction",
+        "letterTitle",
+        "senderLabel",
+        "dateLabel",
+        "salutation",
+        "paragraphs",
+        "signOff",
+        "senderName",
+        "createdAt",
+        "updatedAt"
+      ]
+    }
+  },
+  "firestore": {
+    "/admins/{adminUid}": {
+      "schema": "AdminRole",
+      "description": "Trusted admin registry keyed by UID; immutable from client SDK."
+    },
+    "/published_site/{configId}": {
+      "schema": "PublishedSiteConfig",
+      "description": "Singleton live_site document containing UI copy for all steps and ordered owner letter IDs."
+    },
+    "/published_letters/{letterId}": {
+      "schema": "PublishedLetter",
+      "description": "Published owner letters (apology, birthday, and admin-created letters) visible to all visitors."
+    }
+  }
+}

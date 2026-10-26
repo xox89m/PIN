@@ -147,19 +147,19 @@ export interface SiteCopy {
 export const UI_COPY: SiteCopy = {
   siteTitle: 'ถึงคุณ ♡',
   cover: {
-    subtitleLine1: 'บางคำขอโทษ... อาจไม่ถูกพูดออกมา',
-    subtitleLine2: 'แต่ยังอยากให้คุณได้รับมัน',
+    subtitleLine1: 'ฉันมีไรอยากให้คุณดู',
+    subtitleLine2: 'ลองเปิดดูสิ',
     startBtn: 'เริ่มต้น',
   },
   stepA: {
     homeBtn: 'หน้าหลัก',
     backBtn: 'กลับ',
-    initialQuestion: 'นั่นคุณจริง ๆ ใช่มั้ย 🥹',
+    initialQuestion: 'เดี๋ยวก่อนนั่นคุณจริง ๆ ใช่มั้ย 🥹',
     yesBtn: 'ใช่',
     noBtn: 'ไม่',
     waitMessage: 'โอเค ไปเลย',
     waitSubLabel: '3 วินาที...',
-    waitFollowUp: 'เดี๋ยว... ไม่ใช่คุณจริง ๆ หรอ ต้องเป็นคุณดิ',
+    waitFollowUp: 'เดี๋ยว... ไม่ใช่คุณจริงๆ หรอ ต้องเป็นคุณดิ',
     actuallyMeBtn: 'ที่จริงคือฉันเนี่ยแหละ',
     reallyNotMeBtn: 'ไม่ใช่จริง ๆ',
     politeExitTitle: 'ไม่เป็นไรเลยนะ ขอบคุณที่แวะเข้ามา',
@@ -168,7 +168,7 @@ export const UI_COPY: SiteCopy = {
   },
   stepB: {
     backBtn: 'กลับ',
-    question: 'คุณเกิดวันที่เท่าไหร่',
+    question: 'ลองพิสูจสิคุณเกิดวันที่เท่าไหร่',
     submitBtn: 'ยืนยัน',
     wrongDateMessage:
       'วันเกิดยังไม่ตรงกับคนที่เรากำลังรออยู่นะ ลองตรวจสอบวัน เดือน หรือปี ค.ศ. อีกครั้งได้เลย',
@@ -176,8 +176,8 @@ export const UI_COPY: SiteCopy = {
   stepC: {
     mailboxHeading: 'โต๊ะจดหมายถึงคุณ',
     deskHintClosed: 'เลือกแตะซองจดหมายบนโต๊ะ หรือเปิดดูกล่องจดหมายด้านข้างได้เลย',
-    birthdayEnvelopeTag: 'ซองข้างแก้วกาแฟ · แตะเพื่อเปิดอ่าน',
-    apologyEnvelopeTag: 'ซองจดหมายหลัก · แตะเพื่อเปิดอ่าน',
+    birthdayEnvelopeTag: 'แตะเพื่อเปิดอ่าน',
+    apologyEnvelopeTag: 'แตะเพื่อเปิดอ่าน',
     mailboxBoxTitle: 'กล่องใส่จดหมาย',
     mailboxSubtitle: 'แตะเลือกจดหมายเพื่อเปิดอ่าน',
     foldBackBtn: 'พับเก็บวางไว้บนโต๊ะ',
@@ -185,7 +185,7 @@ export const UI_COPY: SiteCopy = {
     writeNewReplyBtn: 'เขียนจดหมายฉบับใหม่',
     writeShortBtn: 'เขียนจดหมาย',
     privacyFooterNote:
-      'จดหมายที่ตอบกลับจะถูกเก็บอย่างเป็นส่วนตัวใน Google Drive ของผู้สร้างเว็บไซต์',
+      'จดหมายที่ตอบกลับจะถูกเก็บอย่างดี สาบานน ',
   },
   stepD: {
     backBtn: 'กลับ',

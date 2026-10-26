@@ -72,8 +72,10 @@ type AudioStateListener = () => void;
 class InteractiveLetterSoundEngine {
   private ctx: AudioContext | null = null;
   private sfxBus: GainNode | null = null;
+  private sharedPaperBuffer: AudioBuffer | null = null;
   private bgmAudio: HTMLAudioElement | null = null;
   private loadedTrackUrl = '';
+  private isPlayPending = false;
   private fadeTimerId: number | null = null;
   private foldTimers: number[] = [];
   private listeners = new Set<AudioStateListener>();
@@ -176,8 +178,9 @@ class InteractiveLetterSoundEngine {
     if (!resolvedUrl) return null;
 
     if (!this.bgmAudio) {
-      const audio = new Audio(resolvedUrl);
-      audio.preload = 'auto';
+      const audio = new Audio();
+      audio.preload = 'none';
+      audio.src = resolvedUrl;
       audio.loop = APP_CONFIG.bgmTracks.length <= 1;
       audio.volume = this.musicVolume;
       audio.addEventListener('ended', () => {
@@ -192,10 +195,10 @@ class InteractiveLetterSoundEngine {
       this.loadedTrackUrl = resolvedUrl;
     } else if (this.loadedTrackUrl !== resolvedUrl) {
       this.clearFadeTimer();
+      this.isPlayPending = false;
       this.bgmAudio.pause();
       this.bgmAudio.src = resolvedUrl;
       this.bgmAudio.loop = APP_CONFIG.bgmTracks.length <= 1;
-      this.bgmAudio.load();
       this.loadedTrackUrl = resolvedUrl;
     }
 
@@ -216,33 +219,39 @@ class InteractiveLetterSoundEngine {
     this.clearFadeTimer();
 
     if (!this.isUnlocked || this.mode !== SoundMode.ALL_ON) {
-      audio.pause();
+      this.isPlayPending = false;
+      if (!audio.paused) {
+        audio.pause();
+      }
       return;
     }
 
     const targetVol = this.musicVolume;
-    if (audio.paused) {
+    if (audio.paused && !this.isPlayPending) {
+      this.isPlayPending = true;
       audio.volume = Math.min(0.06, targetVol);
       void audio
         .play()
         .then(() => {
+          this.isPlayPending = false;
           this.clearFadeTimer();
           this.fadeTimerId = window.setInterval(() => {
             if (!this.bgmAudio || this.bgmAudio.paused) {
               this.clearFadeTimer();
               return;
             }
-            const next = Math.min(targetVol, this.bgmAudio.volume + 0.04);
+            const next = Math.min(targetVol, this.bgmAudio.volume + 0.05);
             this.bgmAudio.volume = next;
             if (next >= targetVol) {
               this.clearFadeTimer();
             }
-          }, 70);
+          }, 90);
         })
         .catch(() => {
+          this.isPlayPending = false;
           // รอกดปุ่มจากผู้ใช้หากเบราว์เซอร์ยังล็อกอยู่
         });
-    } else {
+    } else if (!audio.paused) {
       audio.volume = targetVol;
     }
   }
@@ -338,8 +347,11 @@ class InteractiveLetterSoundEngine {
     this.notifyListeners();
   }
 
-  private createPaperTextureBuffer(ctx: AudioContext, durationSec: number): AudioBuffer {
-    const sampleCount = Math.max(1, Math.floor(ctx.sampleRate * durationSec));
+  private createPaperTextureBuffer(ctx: AudioContext, _durationSec: number): AudioBuffer {
+    if (this.sharedPaperBuffer && this.sharedPaperBuffer.sampleRate === ctx.sampleRate) {
+      return this.sharedPaperBuffer;
+    }
+    const sampleCount = Math.max(1, Math.floor(ctx.sampleRate * 0.45));
     const buffer = ctx.createBuffer(1, sampleCount, ctx.sampleRate);
     const data = buffer.getChannelData(0);
 
@@ -350,6 +362,7 @@ class InteractiveLetterSoundEngine {
       last = last * 0.58 + white * 0.42;
       data[i] = last * grain;
     }
+    this.sharedPaperBuffer = buffer;
     return buffer;
   }
 

@@ -23,6 +23,13 @@ import {
   syncAdminSiteCopyToDrive,
   upsertLetterIntoLocalHistory,
 } from './services/letterStorage';
+import {
+  publishAdminStateToEveryone,
+  PublishResult,
+  signInAdminWithGoogle,
+  subscribeAdminAuth,
+  subscribeToPublishedSiteState,
+} from './services/cloudConfigSync';
 import { StepCoverLanding } from './components/StepCoverLanding';
 import { StepAIdentity } from './components/StepAIdentity';
 import { StepBBirthday } from './components/StepBBirthday';
@@ -46,6 +53,7 @@ export enum AppStep {
 export default function App() {
   const [currentStep, setCurrentStep] = useState<AppStep>(AppStep.STEP_COVER);
   const [isAdmin, setIsAdmin] = useState<boolean>(false);
+  const [isCloudAdminVerified, setIsCloudAdminVerified] = useState<boolean>(false);
 
   // Sound Atmosphere & Playlist State
   const [soundMode, setSoundMode] = useState<SoundMode>(() =>
@@ -82,8 +90,11 @@ export default function App() {
   });
   const [statusMessage, setStatusMessage] = useState<string>('');
 
-  // Concurrency, Debounce & Retry refs
+  // Concurrency, Debounce & Latest State refs
   const draftRef = useRef<ReplyLetterDraft>(draft);
+  const siteCopyRef = useRef<SiteCopy>(siteCopy);
+  const ownerLettersRef = useRef<LetterDocument[]>(ownerLetters);
+  const hasFirestoreDataRef = useRef<boolean>(false);
   const debounceTimerRef = useRef<number | null>(null);
   const retryTimerRef = useRef<number | null>(null);
   const retryCountRef = useRef<number>(0);
@@ -93,6 +104,14 @@ export default function App() {
   useEffect(() => {
     draftRef.current = draft;
   }, [draft]);
+
+  useEffect(() => {
+    siteCopyRef.current = siteCopy;
+  }, [siteCopy]);
+
+  useEffect(() => {
+    ownerLettersRef.current = ownerLetters;
+  }, [ownerLetters]);
 
   // ซิงก์สถานะเพลงและเสียงกับ soundEngine (เช่น เมื่อเพลงจบแล้วเลื่อนไปเพลงถัดไปอัตโนมัติ)
   useEffect(() => {
@@ -111,30 +130,59 @@ export default function App() {
     }
   }, [siteCopy.siteTitle]);
 
-  // โหลดจดหมายหลักและข้อความหน้าเว็บของแอดมินที่ซิงก์ไว้บน Cloud (ถ้ามี)
+  // ซิงก์ข้อมูลจาก Cloud Firestore แบบเรียลไทม์ให้ผู้เข้าชมทุกคนเห็นสิ่งเดียวกับที่แอดมินแก้ทันที
   useEffect(() => {
+    const unsubFirestore = subscribeToPublishedSiteState({
+      onSiteCopyChange: (liveCopy) => {
+        hasFirestoreDataRef.current = true;
+        setSiteCopy(liveCopy);
+      },
+      onOwnerLettersChange: (liveLetters) => {
+        hasFirestoreDataRef.current = true;
+        setOwnerLetters(liveLetters);
+      },
+    });
+
+    const unsubAuth = subscribeAdminAuth((snap) => {
+      setIsCloudAdminVerified(snap.isVerifiedOwner);
+    });
+
+    // Fallback สำรองจาก Apps Script เฉพาะกรณีที่แอดมินยังไม่เคยกดบันทึกขึ้น Firestore ครั้งแรก
     void fetchOwnerConfigFromCloud().then(({ ownerLetters: cloudDocs, siteCopy: cloudCopy }) => {
+      if (hasFirestoreDataRef.current) return;
       if (cloudDocs && cloudDocs.length > 0) {
+        saveOwnerLettersToLocal(cloudDocs);
         setOwnerLetters(cloudDocs);
       }
       if (cloudCopy) {
+        saveSiteCopyToLocal(cloudCopy);
         setSiteCopy(cloudCopy);
       }
     });
+
+    return () => {
+      unsubFirestore();
+      unsubAuth();
+    };
   }, []);
 
-  // ปลดล็อกระบบเสียงอัตโนมัติทันทีที่ผู้ใช้แตะหน้าจอหรือกดปุ่มครั้งแรก
+  // ปลดล็อกระบบเสียงด้วยเหตุการณ์ touchend / click ที่เข้ากันได้กับ iOS Safari และ Android โดยไม่ทำให้เครื่องค้าง
   useEffect(() => {
     const unlockOnce = () => {
+      window.removeEventListener('touchend', unlockOnce);
+      window.removeEventListener('click', unlockOnce);
+      window.removeEventListener('keydown', unlockOnce);
       if (soundEngine.getMode() !== SoundMode.MUTED) {
         soundEngine.unlockAndStartIfEnabled();
         setIsAudioUnlocked(soundEngine.getIsUnlocked());
       }
     };
-    window.addEventListener('pointerdown', unlockOnce, { once: true });
+    window.addEventListener('touchend', unlockOnce, { once: true, passive: true });
+    window.addEventListener('click', unlockOnce, { once: true, passive: true });
     window.addEventListener('keydown', unlockOnce, { once: true });
     return () => {
-      window.removeEventListener('pointerdown', unlockOnce);
+      window.removeEventListener('touchend', unlockOnce);
+      window.removeEventListener('click', unlockOnce);
       window.removeEventListener('keydown', unlockOnce);
     };
   }, []);
@@ -340,51 +388,112 @@ export default function App() {
     };
   }, [executeSave]);
 
-  // ฟังก์ชันจัดการจดหมายสำหรับแอดมิน (28 สิงหาคม 2111)
-  const handleSaveOwnerLetter = async (
-    updatedDoc: LetterDocument
-  ): Promise<boolean> => {
-    const existingIdx = ownerLetters.findIndex((d) => d.id === updatedDoc.id);
-    const nextList =
-      existingIdx >= 0
-        ? ownerLetters.map((d, i) => (i === existingIdx ? updatedDoc : d))
-        : [...ownerLetters, updatedDoc];
-
-    setOwnerLetters(nextList);
-    saveOwnerLettersToLocal(nextList);
-    return syncAdminOwnerLetterToDrive(updatedDoc, nextList);
+  // เชื่อมต่อบัญชี Google เจ้าของเว็บและซิงก์ค่าปัจจุบันขึ้นฐานข้อมูลกลางทันที
+  const handleConnectCloudAdmin = async (): Promise<PublishResult> => {
+    const login = await signInAdminWithGoogle();
+    if (!login.ok) {
+      return { ok: false, errorMessage: login.errorMessage };
+    }
+    return publishAdminStateToEveryone({
+      siteCopy: siteCopyRef.current,
+      ownerLetters: ownerLettersRef.current,
+    });
   };
 
-  const handleDeleteExtraOwnerLetter = (docId: string) => {
-    if (docId === 'apology' || docId === 'birthday') return;
-    const nextList = ownerLetters.filter((d) => d.id !== docId);
+  // ฟังก์ชันจัดการจดหมายสำหรับแอดมิน (28 สิงหาคม 2111) — เผยแพร่ให้ทุกคนเห็นเหมือนกันทันที
+  const handleSaveOwnerLetter = async (
+    updatedDoc: LetterDocument
+  ): Promise<PublishResult> => {
+    const currentList = ownerLettersRef.current;
+    const existingIdx = currentList.findIndex((d) => d.id === updatedDoc.id);
+    const nextList =
+      existingIdx >= 0
+        ? currentList.map((d, i) => (i === existingIdx ? updatedDoc : d))
+        : [...currentList, updatedDoc];
+
+    ownerLettersRef.current = nextList;
     setOwnerLetters(nextList);
     saveOwnerLettersToLocal(nextList);
+
+    void syncAdminOwnerLetterToDrive(updatedDoc, nextList);
+    return publishAdminStateToEveryone({
+      siteCopy: siteCopyRef.current,
+      ownerLetters: nextList,
+    });
+  };
+
+  const handleDeleteExtraOwnerLetter = async (
+    docId: string
+  ): Promise<PublishResult> => {
+    if (docId === 'apology' || docId === 'birthday') {
+      return { ok: false, errorMessage: 'ไม่สามารถลบซองจดหมายหลักได้' };
+    }
+    const nextList = ownerLettersRef.current.filter((d) => d.id !== docId);
+    ownerLettersRef.current = nextList;
+    setOwnerLetters(nextList);
+    saveOwnerLettersToLocal(nextList);
+
     const apology = nextList.find((d) => d.id === 'apology');
     if (apology) {
       void syncAdminOwnerLetterToDrive(apology, nextList);
     }
+    return publishAdminStateToEveryone({
+      siteCopy: siteCopyRef.current,
+      ownerLetters: nextList,
+      deletedLetterId: docId,
+    });
   };
 
-  const handleResetOwnerLetters = () => {
+  const handleResetOwnerLetters = async (): Promise<PublishResult> => {
+    const prevIds = ownerLettersRef.current.map((d) => d.id);
     const defaults = resetOwnerLettersInLocal();
+    ownerLettersRef.current = defaults;
     setOwnerLetters(defaults);
+
     if (defaults[0]) {
       void syncAdminOwnerLetterToDrive(defaults[0], defaults);
     }
+
+    let lastRes: PublishResult = await publishAdminStateToEveryone({
+      siteCopy: siteCopyRef.current,
+      ownerLetters: defaults,
+    });
+
+    for (const oldId of prevIds) {
+      if (oldId !== 'apology' && oldId !== 'birthday' && lastRes.ok) {
+        lastRes = await publishAdminStateToEveryone({
+          siteCopy: siteCopyRef.current,
+          ownerLetters: defaults,
+          deletedLetterId: oldId,
+        });
+      }
+    }
+    return lastRes;
   };
 
-  // ฟังก์ชันแก้ไขและคืนค่าคำพูดทุกหน้าสำหรับแอดมิน
-  const handleSaveSiteCopy = async (nextCopy: SiteCopy): Promise<boolean> => {
+  // ฟังก์ชันแก้ไขและคืนค่าคำพูดทุกหน้าสำหรับแอดมิน — เผยแพร่ให้ทุกคนเห็นเหมือนกันทันที
+  const handleSaveSiteCopy = async (nextCopy: SiteCopy): Promise<PublishResult> => {
+    siteCopyRef.current = nextCopy;
     setSiteCopy(nextCopy);
     saveSiteCopyToLocal(nextCopy);
-    return syncAdminSiteCopyToDrive(nextCopy);
+
+    void syncAdminSiteCopyToDrive(nextCopy);
+    return publishAdminStateToEveryone({
+      siteCopy: nextCopy,
+      ownerLetters: ownerLettersRef.current,
+    });
   };
 
-  const handleResetSiteCopy = () => {
+  const handleResetSiteCopy = async (): Promise<PublishResult> => {
     const defaults = resetSiteCopyInLocal();
+    siteCopyRef.current = defaults;
     setSiteCopy(defaults);
+
     void syncAdminSiteCopyToDrive(defaults);
+    return publishAdminStateToEveryone({
+      siteCopy: defaults,
+      ownerLetters: ownerLettersRef.current,
+    });
   };
 
   const handleAdminSaveReplyLetter = async (
@@ -592,8 +701,8 @@ export default function App() {
 
   return (
     <SiteCopyContext.Provider value={siteCopy}>
-      <div className="relative min-h-screen flex flex-col bg-[#0F0D0C] text-[#F4EBE1] overflow-x-hidden">
-        {/* พื้นหลังมีชีวิตชีวา: สายฝนตกด้านนอก หยดน้ำไหลตามกระจกหน้าต่าง และเปลวไฟเทียนพริ้วไหวตรงพิกัดเทียนจริง */}
+      <div className="relative isolate min-h-screen flex flex-col bg-[#0F0D0C] text-[#F4EBE1] overflow-x-hidden">
+        {/* พื้นหลังภาพวาดต้นฉบับโทนอบอุ่นใต้แสงเทียน (ไม่มีเอฟเฟกต์ฝน) */}
         <AmbientAtmosphere
           sceneId={getLivingSceneId()}
           customBgUrl={
@@ -601,11 +710,13 @@ export default function App() {
           }
         />
 
-        {/* แถบเครื่องมือแอดมินมุมซ้ายบน (มีปุ่มกลับหน้าแรก แก้ไขคำได้ทุกหน้า และข้ามไปหน้าใดก็ได้) */}
+        {/* แถบเครื่องมือแอดมินมุมซ้ายบน (มีปุ่มกลับหน้าแรก แก้ไขคำได้ทุกหน้า และซิงก์ให้ทุกคนเห็นตรงกัน) */}
         {isAdmin && (
           <AdminGlobalBar
             currentStep={currentStep as StepKey}
             siteCopy={siteCopy}
+            isCloudAdminVerified={isCloudAdminVerified}
+            onConnectCloudAdmin={handleConnectCloudAdmin}
             onJumpToStep={(step) => setCurrentStep(step as AppStep)}
             onSaveSiteCopy={handleSaveSiteCopy}
             onResetSiteCopy={handleResetSiteCopy}

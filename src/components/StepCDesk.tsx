@@ -6,6 +6,7 @@ import {
 } from '../content/letters';
 import { useSiteCopy } from '../context/SiteCopyContext';
 import { ReplyLetterDraft } from '../services/letterStorage';
+import { PublishResult } from '../services/cloudConfigSync';
 import {
   CoffeeAndBirthdayEnvelopeIllustration,
   GoldenEnvelopeIllustration,
@@ -14,6 +15,7 @@ import {
   WoodenLetterboxIllustration,
 } from './EnvelopeIllustrations';
 import {
+  AlertCircle,
   ArrowLeft,
   Check,
   Eye,
@@ -49,9 +51,9 @@ interface StepCDeskProps {
   ownerLetters: LetterDocument[];
   currentDraft: ReplyLetterDraft;
   sentLetters: ReplyLetterDraft[];
-  onSaveOwnerLetter: (updatedDoc: LetterDocument) => Promise<boolean>;
-  onDeleteExtraOwnerLetter: (docId: string) => void;
-  onResetOwnerLetters: () => void;
+  onSaveOwnerLetter: (updatedDoc: LetterDocument) => Promise<PublishResult>;
+  onDeleteExtraOwnerLetter: (docId: string) => Promise<PublishResult>;
+  onResetOwnerLetters: () => Promise<PublishResult>;
   onAdminSaveReplyLetter: (updatedReply: ReplyLetterDraft) => Promise<boolean>;
   onAdminDeleteReplyLetter: (letterId: string) => void;
   onReturnToCover: () => void;
@@ -126,6 +128,7 @@ export function StepCDesk({
   const [selectedItem, setSelectedItem] = useState<SelectedMailboxItem | null>(null);
   const [adminEditor, setAdminEditor] = useState<AdminEditDraftState | null>(null);
   const [adminSaveFeedback, setAdminSaveFeedback] = useState<string>('');
+  const [adminSaveIsError, setAdminSaveIsError] = useState<boolean>(false);
   const [isSavingAdminEdit, setIsSavingAdminEdit] = useState<boolean>(false);
   const [confirmResetModalOpen, setConfirmResetModalOpen] = useState<boolean>(false);
 
@@ -343,15 +346,22 @@ export function StepCDesk({
         senderName: adminEditor.senderName.trim() || 'ฉัน',
       };
 
-      const synced = await onSaveOwnerLetter(updatedDoc);
+      const res = await onSaveOwnerLetter(updatedDoc);
       setIsSavingAdminEdit(false);
       setSelectedItem({ kind: 'owner', docId: updatedDoc.id });
-      setAdminEditor(null);
-      setAdminSaveFeedback(
-        synced
-          ? 'บันทึกชื่อและเนื้อหาจดหมายลงเครื่องและซิงก์ไปยัง Google Drive เรียบร้อยแล้ว'
-          : 'บันทึกชื่อและเนื้อหาจดหมายในเครื่องเรียบร้อยแล้ว'
-      );
+      if (res.ok) {
+        setAdminEditor(null);
+        setAdminSaveIsError(false);
+        setAdminSaveFeedback(
+          'บันทึกชื่อและเนื้อหาจดหมายสำเร็จ! ทุกคนที่เปิดเว็บไซต์จะเห็นจดหมายฉบับนี้เหมือนกันทันที'
+        );
+      } else {
+        setAdminSaveIsError(true);
+        setAdminSaveFeedback(
+          res.errorMessage ||
+            'บันทึกไว้ในเครื่องแล้ว กดปุ่มบันทึกอีกครั้งเพื่อซิงก์ออนไลน์ให้ทุกคนเห็น'
+        );
+      }
     } else {
       const nextVersion = adminEditor.original.version + 1;
       const updatedReply: ReplyLetterDraft = {
@@ -366,6 +376,7 @@ export function StepCDesk({
       setIsSavingAdminEdit(false);
       setSelectedItem({ kind: 'reply', letterId: updatedReply.letterId });
       setAdminEditor(null);
+      setAdminSaveIsError(false);
       setAdminSaveFeedback(
         synced
           ? 'บันทึกการแก้ไขจดหมายและซิงก์ไปยัง Google Drive เรียบร้อยแล้ว'
@@ -458,9 +469,17 @@ export function StepCDesk({
       {adminSaveFeedback && (
         <div
           role="status"
-          className="rounded-xl bg-[#1D2E22]/90 border border-[#8FC99E]/40 px-4 py-2.5 text-xs sm:text-sm text-[#E4F7E9] flex items-center gap-2"
+          className={`rounded-xl px-4 py-2.5 text-xs sm:text-sm flex items-center gap-2 border ${
+            adminSaveIsError
+              ? 'bg-[#381814]/90 border-[#E5988E]/50 text-[#FADCD8]'
+              : 'bg-[#1D2E22]/90 border-[#8FC99E]/40 text-[#E4F7E9]'
+          }`}
         >
-          <Check className="w-4 h-4 shrink-0" aria-hidden="true" />
+          {adminSaveIsError ? (
+            <AlertCircle className="w-4 h-4 shrink-0" aria-hidden="true" />
+          ) : (
+            <Check className="w-4 h-4 shrink-0" aria-hidden="true" />
+          )}
           <span>{adminSaveFeedback}</span>
         </div>
       )}
@@ -682,9 +701,17 @@ export function StepCDesk({
                       <button
                         type="button"
                         onClick={() => {
-                          onDeleteExtraOwnerLetter(adminEditor.id);
+                          const targetId = adminEditor.id;
                           setAdminEditor(null);
                           setSelectedItem(null);
+                          void onDeleteExtraOwnerLetter(targetId).then((res) => {
+                            setAdminSaveIsError(!res.ok);
+                            setAdminSaveFeedback(
+                              res.ok
+                                ? 'ลบจดหมายฉบับนี้ออกจากกล่องและอัปเดตให้ทุกคนเห็นแล้ว'
+                                : res.errorMessage || 'ลบจดหมายออกจากเครื่องแล้ว'
+                            );
+                          });
                         }}
                         className="inline-flex items-center gap-1.5 min-h-[44px] px-3 py-2 text-xs sm:text-sm text-[#7A241B] hover:underline cursor-pointer"
                       >
@@ -1274,11 +1301,18 @@ export function StepCDesk({
                 type="button"
                 onClick={() => {
                   setConfirmResetModalOpen(false);
-                  onResetOwnerLetters();
                   setAdminEditor(null);
-                  setAdminSaveFeedback('คืนค่าจดหมายกลับเป็นข้อความต้นฉบับเรียบร้อยแล้ว');
+                  void onResetOwnerLetters().then((res) => {
+                    setAdminSaveIsError(!res.ok);
+                    setAdminSaveFeedback(
+                      res.ok
+                        ? 'คืนค่าจดหมายกลับเป็นต้นฉบับและอัปเดตให้ทุกคนเห็นตรงกันเรียบร้อยแล้ว'
+                        : res.errorMessage ||
+                          'คืนค่าจดหมายในเครื่องเรียบร้อยแล้ว'
+                    );
+                  });
                 }}
-                className="min-h-[44px] px-5 py-2 text-sm font-semibold bg-[#8F2D22] hover:bg-[#752219] text-white rounded-full whitespace-nowrap cursor-pointer"
+                className="min-h-[44px] px-5 py-2 text-sm font-semibold bg-[#8F2D22] hover:bg-[#752219] text-white rounded-full whitespace-nowrap shrink-0 cursor-pointer"
               >
                 ยืนยันคืนค่าต้นฉบับ
               </button>

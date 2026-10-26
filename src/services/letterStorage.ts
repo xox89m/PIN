@@ -415,9 +415,21 @@ export async function syncAdminOwnerLetterToDrive(
 
 const LOCAL_SITE_COPY_KEY = 'to_you_site_copy_v1';
 
+export function cloneSiteCopy(source: SiteCopy): SiteCopy {
+  return {
+    siteTitle: source.siteTitle,
+    cover: { ...source.cover },
+    stepA: { ...source.stepA },
+    stepB: { ...source.stepB },
+    stepC: { ...source.stepC },
+    stepD: { ...source.stepD },
+    stepE: { ...source.stepE },
+  };
+}
+
 export function mergeWithDefaultSiteCopy(partial: unknown): SiteCopy {
   if (!partial || typeof partial !== 'object') {
-    return structuredClone(UI_COPY);
+    return cloneSiteCopy(UI_COPY);
   }
   const p = partial as Partial<SiteCopy>;
   return {
@@ -434,10 +446,10 @@ export function mergeWithDefaultSiteCopy(partial: unknown): SiteCopy {
 export function loadSiteCopyFromLocal(): SiteCopy {
   try {
     const raw = localStorage.getItem(LOCAL_SITE_COPY_KEY);
-    if (!raw) return structuredClone(UI_COPY);
+    if (!raw) return cloneSiteCopy(UI_COPY);
     return mergeWithDefaultSiteCopy(JSON.parse(raw));
   } catch {
-    return structuredClone(UI_COPY);
+    return cloneSiteCopy(UI_COPY);
   }
 }
 
@@ -455,7 +467,7 @@ export function resetSiteCopyInLocal(): SiteCopy {
   } catch {
     // Ignore
   }
-  return structuredClone(UI_COPY);
+  return cloneSiteCopy(UI_COPY);
 }
 
 export async function syncAdminSiteCopyToDrive(copy: SiteCopy): Promise<boolean> {
@@ -509,7 +521,7 @@ export async function syncAdminSiteCopyToDrive(copy: SiteCopy): Promise<boolean>
 }
 
 /**
- * โหลดจดหมายหลักและข้อความหน้าเว็บของแอดมินที่ซิงก์ไว้บน Cloud (หาก Code.gs รองรับ)
+ * โหลดจดหมายหลักและข้อความหน้าเว็บสำรองจาก Google Apps Script (พร้อมตัวตัดเวลาป้องกันค้างบนมือถือ)
  */
 export async function fetchOwnerConfigFromCloud(): Promise<{
   ownerLetters: LetterDocument[] | null;
@@ -520,8 +532,11 @@ export async function fetchOwnerConfigFromCloud(): Promise<{
     return { ownerLetters: null, siteCopy: null };
   }
 
+  const controller = new AbortController();
+  const timeoutId = window.setTimeout(() => controller.abort(), 8000);
+
   try {
-    const res = await fetch(gasUrl, { method: 'GET' });
+    const res = await fetch(gasUrl, { method: 'GET', signal: controller.signal });
     if (!res.ok) return { ownerLetters: null, siteCopy: null };
     const data = (await res.json()) as {
       ok?: boolean;
@@ -535,19 +550,18 @@ export async function fetchOwnerConfigFromCloud(): Promise<{
     if (data.ok && Array.isArray(data.ownerLetters)) {
       const valid = data.ownerLetters.filter(isValidLetterDocument);
       if (valid.length > 0) {
-        saveOwnerLettersToLocal(valid);
         ownerLetters = valid;
       }
     }
 
     if (data.ok && data.siteCopy && typeof data.siteCopy === 'object') {
-      const merged = mergeWithDefaultSiteCopy(data.siteCopy);
-      saveSiteCopyToLocal(merged);
-      siteCopy = merged;
+      siteCopy = mergeWithDefaultSiteCopy(data.siteCopy);
     }
 
     return { ownerLetters, siteCopy };
   } catch {
     return { ownerLetters: null, siteCopy: null };
+  } finally {
+    window.clearTimeout(timeoutId);
   }
 }

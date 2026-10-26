@@ -348,6 +348,20 @@ body {
   transform-origin: bottom;
 }
 
+@media (max-width: 768px), (pointer: coarse) {
+  .night-glass-btn {
+    background: rgba(24, 18, 14, 0.84);
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
+
+  .night-glass-btn-active {
+    background: rgba(92, 74, 56, 0.86);
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {
     animation-duration: 0.01ms !important;

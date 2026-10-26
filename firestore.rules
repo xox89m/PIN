@@ -1,0 +1,300 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Pillar 1: Global Default-Deny Safety Net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 64 && id.matches('^[a-zA-Z0-9_-]+$');
+    }
+
+    function isValidUid(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_.:-]+$');
+    }
+
+    function isBoundedString(val, minLen, maxLen) {
+      return val is string && val.size() >= minLen && val.size() <= maxLen;
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isVerifiedUser() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
+    function isAdmin() {
+      return isVerifiedUser() && (
+        (request.auth.token.email is string &&
+          request.auth.token.email.size() <= 254 &&
+          request.auth.token.email.lower() == 'xox89m97@gmail.com') ||
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid))
+      );
+    }
+
+    function isValidCoverMap(m) {
+      return m is map &&
+        m.keys().hasAll(['subtitleLine1', 'subtitleLine2', 'startBtn']) &&
+        m.keys().hasOnly(['subtitleLine1', 'subtitleLine2', 'startBtn']) &&
+        isBoundedString(m.subtitleLine1, 0, 500) &&
+        isBoundedString(m.subtitleLine2, 0, 500) &&
+        isBoundedString(m.startBtn, 1, 200);
+    }
+
+    function isValidStepAMap(m) {
+      return m is map &&
+        m.keys().hasAll([
+          'homeBtn', 'backBtn', 'initialQuestion', 'yesBtn', 'noBtn',
+          'waitMessage', 'waitSubLabel', 'waitFollowUp',
+          'actuallyMeBtn', 'reallyNotMeBtn', 'politeExitTitle', 'politeExitBody'
+        ]) &&
+        m.keys().hasOnly([
+          'homeBtn', 'backBtn', 'initialQuestion', 'yesBtn', 'noBtn',
+          'waitMessage', 'waitSubLabel', 'waitFollowUp',
+          'actuallyMeBtn', 'reallyNotMeBtn', 'politeExitTitle', 'politeExitBody'
+        ]) &&
+        isBoundedString(m.homeBtn, 0, 200) &&
+        isBoundedString(m.backBtn, 0, 200) &&
+        isBoundedString(m.initialQuestion, 0, 500) &&
+        isBoundedString(m.yesBtn, 0, 200) &&
+        isBoundedString(m.noBtn, 0, 200) &&
+        isBoundedString(m.waitMessage, 0, 500) &&
+        isBoundedString(m.waitSubLabel, 0, 200) &&
+        isBoundedString(m.waitFollowUp, 0, 500) &&
+        isBoundedString(m.actuallyMeBtn, 0, 300) &&
+        isBoundedString(m.reallyNotMeBtn, 0, 300) &&
+        isBoundedString(m.politeExitTitle, 0, 500) &&
+        isBoundedString(m.politeExitBody, 0, 1000);
+    }
+
+    function isValidStepBMap(m) {
+      return m is map &&
+        m.keys().hasAll(['backBtn', 'question', 'submitBtn', 'wrongDateMessage']) &&
+        m.keys().hasOnly(['backBtn', 'question', 'submitBtn', 'wrongDateMessage']) &&
+        isBoundedString(m.backBtn, 0, 200) &&
+        isBoundedString(m.question, 0, 400) &&
+        isBoundedString(m.submitBtn, 0, 200) &&
+        isBoundedString(m.wrongDateMessage, 0, 600);
+    }
+
+    function isValidStepCMap(m) {
+      return m is map &&
+        m.keys().hasAll([
+          'mailboxHeading', 'deskHintClosed', 'birthdayEnvelopeTag', 'apologyEnvelopeTag',
+          'mailboxBoxTitle', 'mailboxSubtitle', 'foldBackBtn',
+          'writeReplyBtn', 'writeNewReplyBtn', 'writeShortBtn', 'privacyFooterNote'
+        ]) &&
+        m.keys().hasOnly([
+          'mailboxHeading', 'deskHintClosed', 'birthdayEnvelopeTag', 'apologyEnvelopeTag',
+          'mailboxBoxTitle', 'mailboxSubtitle', 'foldBackBtn',
+          'writeReplyBtn', 'writeNewReplyBtn', 'writeShortBtn', 'privacyFooterNote'
+        ]) &&
+        isBoundedString(m.mailboxHeading, 0, 300) &&
+        isBoundedString(m.deskHintClosed, 0, 500) &&
+        isBoundedString(m.birthdayEnvelopeTag, 0, 300) &&
+        isBoundedString(m.apologyEnvelopeTag, 0, 300) &&
+        isBoundedString(m.mailboxBoxTitle, 0, 300) &&
+        isBoundedString(m.mailboxSubtitle, 0, 400) &&
+        isBoundedString(m.foldBackBtn, 0, 200) &&
+        isBoundedString(m.writeReplyBtn, 0, 200) &&
+        isBoundedString(m.writeNewReplyBtn, 0, 200) &&
+        isBoundedString(m.writeShortBtn, 0, 200) &&
+        isBoundedString(m.privacyFooterNote, 0, 600);
+    }
+
+    function isValidStepDMap(m) {
+      return m is map &&
+        m.keys().hasAll([
+          'backBtn', 'heading', 'privacyNoticeBody', 'deletionPolicyNote',
+          'titleLabel', 'titlePlaceholder', 'authorLabel', 'authorPlaceholder',
+          'bodyLabel', 'bodyPlaceholder', 'clearDraftBtn', 'finishAndFoldBtn'
+        ]) &&
+        m.keys().hasOnly([
+          'backBtn', 'heading', 'privacyNoticeBody', 'deletionPolicyNote',
+          'titleLabel', 'titlePlaceholder', 'authorLabel', 'authorPlaceholder',
+          'bodyLabel', 'bodyPlaceholder', 'clearDraftBtn', 'finishAndFoldBtn'
+        ]) &&
+        isBoundedString(m.backBtn, 0, 200) &&
+        isBoundedString(m.heading, 0, 300) &&
+        isBoundedString(m.privacyNoticeBody, 0, 1000) &&
+        isBoundedString(m.deletionPolicyNote, 0, 1000) &&
+        isBoundedString(m.titleLabel, 0, 200) &&
+        isBoundedString(m.titlePlaceholder, 0, 300) &&
+        isBoundedString(m.authorLabel, 0, 200) &&
+        isBoundedString(m.authorPlaceholder, 0, 300) &&
+        isBoundedString(m.bodyLabel, 0, 200) &&
+        isBoundedString(m.bodyPlaceholder, 0, 400) &&
+        isBoundedString(m.clearDraftBtn, 0, 200) &&
+        isBoundedString(m.finishAndFoldBtn, 0, 200);
+    }
+
+    function isValidStepEMap(m) {
+      return m is map &&
+        m.keys().hasAll([
+          'savedHeading', 'savedSubheading', 'skipAnimationBtn',
+          'thankYouTitle', 'thankYouSubtitle', 'backToDeskBtn',
+          'writeAnotherBtn', 'editAgainBtn',
+          'unsavedWarningTitle', 'unsavedWarningBody', 'retrySaveBtn'
+        ]) &&
+        m.keys().hasOnly([
+          'savedHeading', 'savedSubheading', 'skipAnimationBtn',
+          'thankYouTitle', 'thankYouSubtitle', 'backToDeskBtn',
+          'writeAnotherBtn', 'editAgainBtn',
+          'unsavedWarningTitle', 'unsavedWarningBody', 'retrySaveBtn'
+        ]) &&
+        isBoundedString(m.savedHeading, 0, 300) &&
+        isBoundedString(m.savedSubheading, 0, 500) &&
+        isBoundedString(m.skipAnimationBtn, 0, 200) &&
+        isBoundedString(m.thankYouTitle, 0, 400) &&
+        isBoundedString(m.thankYouSubtitle, 0, 500) &&
+        isBoundedString(m.backToDeskBtn, 0, 200) &&
+        isBoundedString(m.writeAnotherBtn, 0, 200) &&
+        isBoundedString(m.editAgainBtn, 0, 200) &&
+        isBoundedString(m.unsavedWarningTitle, 0, 400) &&
+        isBoundedString(m.unsavedWarningBody, 0, 1000) &&
+        isBoundedString(m.retrySaveBtn, 0, 200);
+    }
+
+    function isValidPublishedSiteConfig(data) {
+      return data.keys().hasAll([
+          'configId', 'authorUid', 'letterOrderIds', 'siteTitle',
+          'cover', 'stepA', 'stepB', 'stepC', 'stepD', 'stepE',
+          'createdAt', 'updatedAt'
+        ]) &&
+        data.keys().hasOnly([
+          'configId', 'authorUid', 'letterOrderIds', 'siteTitle',
+          'cover', 'stepA', 'stepB', 'stepC', 'stepD', 'stepE',
+          'createdAt', 'updatedAt'
+        ]) &&
+        data.configId is string &&
+        data.configId.size() <= 32 &&
+        data.configId.matches('^[a-zA-Z0-9_-]+$') &&
+        data.configId == 'live_site' &&
+        isValidUid(data.authorUid) &&
+        data.authorUid == request.auth.uid &&
+        data.letterOrderIds is list &&
+        data.letterOrderIds.size() >= 1 &&
+        data.letterOrderIds.size() <= 30 &&
+        isValidId(data.letterOrderIds[0]) &&
+        isBoundedString(data.siteTitle, 1, 200) &&
+        isValidCoverMap(data.cover) &&
+        isValidStepAMap(data.stepA) &&
+        isValidStepBMap(data.stepB) &&
+        isValidStepCMap(data.stepC) &&
+        isValidStepDMap(data.stepD) &&
+        isValidStepEMap(data.stepE) &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidPublishedLetter(data) {
+      return data.keys().hasAll([
+          'id', 'authorUid', 'isOwnerApprovedForProduction',
+          'letterTitle', 'senderLabel', 'dateLabel', 'salutation',
+          'paragraphs', 'signOff', 'senderName', 'createdAt', 'updatedAt'
+        ]) &&
+        data.keys().hasOnly([
+          'id', 'authorUid', 'isOwnerApprovedForProduction',
+          'letterTitle', 'senderLabel', 'dateLabel', 'salutation',
+          'paragraphs', 'signOff', 'senderName', 'createdAt', 'updatedAt'
+        ]) &&
+        isValidId(data.id) &&
+        isValidUid(data.authorUid) &&
+        data.authorUid == request.auth.uid &&
+        data.isOwnerApprovedForProduction is bool &&
+        isBoundedString(data.letterTitle, 1, 200) &&
+        isBoundedString(data.senderLabel, 0, 120) &&
+        isBoundedString(data.dateLabel, 0, 120) &&
+        isBoundedString(data.salutation, 0, 300) &&
+        data.paragraphs is list &&
+        data.paragraphs.size() >= 1 &&
+        data.paragraphs.size() <= 80 &&
+        isBoundedString(data.paragraphs[0], 0, 4000) &&
+        isBoundedString(data.signOff, 0, 200) &&
+        isBoundedString(data.senderName, 0, 120) &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    // Trusted Admin Role Registry (Client writes forbidden)
+    match /admins/{adminUid} {
+      allow get: if isVerifiedUser() && isValidUid(adminUid) && (request.auth.uid == adminUid || isAdmin());
+      allow list: if false;
+      allow create, update, delete: if false;
+    }
+
+    // Singleton Live Website Copy & Letter Order (Public single-doc read, Verified Admin write)
+    match /published_site/{configId} {
+      allow get: if isValidId(configId) && configId == 'live_site';
+      allow list: if false;
+
+      allow create: if isVerifiedUser() &&
+        isValidId(configId) &&
+        configId == 'live_site' &&
+        isValidPublishedSiteConfig(incoming()) &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time &&
+        isAdmin();
+
+      allow update: if isVerifiedUser() &&
+        isValidPublishedSiteConfig(incoming()) &&
+        isValidId(configId) &&
+        configId == 'live_site' &&
+        incoming().configId == existing().configId &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time &&
+        incoming().diff(existing()).affectedKeys().hasOnly([
+          'authorUid', 'letterOrderIds', 'siteTitle',
+          'cover', 'stepA', 'stepB', 'stepC', 'stepD', 'stepE', 'updatedAt'
+        ]) &&
+        isAdmin();
+
+      allow delete: if false;
+    }
+
+    // Published Owner Letters on Desk & Mailbox (Public single-doc read by known ID, Verified Admin write)
+    match /published_letters/{letterId} {
+      allow get: if isValidId(letterId);
+      allow list: if false;
+
+      allow create: if isVerifiedUser() &&
+        isValidId(letterId) &&
+        incoming().id == letterId &&
+        isValidPublishedLetter(incoming()) &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time &&
+        isAdmin();
+
+      allow update: if isVerifiedUser() &&
+        isValidPublishedLetter(incoming()) &&
+        isValidId(letterId) &&
+        incoming().id == existing().id &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time &&
+        incoming().diff(existing()).affectedKeys().hasOnly([
+          'authorUid', 'isOwnerApprovedForProduction',
+          'letterTitle', 'senderLabel', 'dateLabel', 'salutation',
+          'paragraphs', 'signOff', 'senderName', 'updatedAt'
+        ]) &&
+        isAdmin();
+
+      allow delete: if isVerifiedUser() &&
+        isValidId(letterId) &&
+        letterId != 'apology' &&
+        letterId != 'birthday' &&
+        isAdmin();
+    }
+  }
+}
