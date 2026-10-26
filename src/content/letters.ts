@@ -19,7 +19,7 @@ export const APOLOGY_LETTER_CONTENT: LetterDocument = {
   isOwnerApprovedForProduction: true,
   letterTitle: 'จดหมายขอโทษ',
   senderLabel: 'จาก: ฉัน',
-  dateLabel: 'ถึงคุณคนสำคัญ',
+  dateLabel: 'ถึงคุณ',
   salutation: 'คุณ...',
   paragraphs: [
     'ฉันมีเรื่องหนึ่งที่อยากบอกคุณมานานแล้ว ฉันไม่รู้ว่าตอนนี้คุณรู้สึกยังไงกับฉัน หรือคุณยังอยากรับฟังสิ่งที่ฉันพูดอยู่ไหม แต่ฉันอยากขอโทษคุณจริง ๆ',
@@ -77,10 +77,17 @@ export const BIRTHDAY_LETTER_CONTENT: LetterDocument = {
 
 export interface SiteCopy {
   siteTitle: string;
+  globalBars: {
+    adminLoginBtn: string;
+    soundMutedBtn: string;
+    soundTapToPlayBtn: string;
+    soundPlayingSfxOnlyBtn: string;
+  };
   cover: {
     subtitleLine1: string;
     subtitleLine2: string;
     startBtn: string;
+    readAllLettersBtn: string;
   };
   stepA: {
     homeBtn: string;
@@ -95,11 +102,14 @@ export interface SiteCopy {
     reallyNotMeBtn: string;
     politeExitTitle: string;
     politeExitBody: string;
+    politeExitReadBtn: string;
   };
   stepB: {
     backBtn: string;
     question: string;
+    yearRangeHint: string;
     submitBtn: string;
+    skipToReadBtn: string;
     wrongDateMessage: string;
   };
   stepC: {
@@ -107,12 +117,23 @@ export interface SiteCopy {
     deskHintClosed: string;
     birthdayEnvelopeTag: string;
     apologyEnvelopeTag: string;
+    extraEnvelopeTag: string;
+    skipOpenAnimBtn: string;
+    continueDraftBtn: string;
     mailboxBoxTitle: string;
     mailboxSubtitle: string;
+    letterCountUnit: string;
     foldBackBtn: string;
     writeReplyBtn: string;
     writeNewReplyBtn: string;
     writeShortBtn: string;
+    replySenderPrefix: string;
+    untitledReplyLabel: string;
+    emptyReplyBodyLabel: string;
+    referenceIdLabel: string;
+    editReplyBtn: string;
+    syncedBadgeLabel: string;
+    localDraftBadgeLabel: string;
     privacyFooterNote: string;
   };
   stepD: {
@@ -126,30 +147,52 @@ export interface SiteCopy {
     authorPlaceholder: string;
     bodyLabel: string;
     bodyPlaceholder: string;
+    savingStatusText: string;
+    savedStatusText: string;
+    offlineStatusText: string;
+    errorStatusText: string;
+    autosaveHintText: string;
+    retryInlineBtn: string;
     clearDraftBtn: string;
+    clearModalTitle: string;
+    clearModalBody: string;
+    clearModalCancelBtn: string;
+    clearModalConfirmBtn: string;
     finishAndFoldBtn: string;
   };
   stepE: {
+    savingOverlayTitle: string;
+    savingOverlayBody: string;
     savedHeading: string;
     savedSubheading: string;
     skipAnimationBtn: string;
     thankYouTitle: string;
     thankYouSubtitle: string;
+    heartSymbol: string;
+    referenceCodeLabel: string;
     backToDeskBtn: string;
     writeAnotherBtn: string;
     editAgainBtn: string;
     unsavedWarningTitle: string;
     unsavedWarningBody: string;
     retrySaveBtn: string;
+    backToWriteBtn: string;
   };
 }
 
 export const UI_COPY: SiteCopy = {
   siteTitle: 'ถึงคุณ ♡',
+  globalBars: {
+    adminLoginBtn: 'ล็อกอินผู้ดูแล',
+    soundMutedBtn: 'ปิดเสียงอยู่',
+    soundTapToPlayBtn: 'แตะเพื่อเปิดเพลง',
+    soundPlayingSfxOnlyBtn: 'เปิดเฉพาะเสียงกระดาษ',
+  },
   cover: {
     subtitleLine1: 'ฉันมีไรอยากให้คุณดู',
     subtitleLine2: 'ลองเปิดดูสิ',
     startBtn: 'เริ่มต้น',
+    readAllLettersBtn: '',
   },
   stepA: {
     homeBtn: 'หน้าหลัก',
@@ -165,11 +208,14 @@ export const UI_COPY: SiteCopy = {
     politeExitTitle: 'ไม่เป็นไรเลยนะ ขอบคุณที่แวะเข้ามา',
     politeExitBody:
       'พื้นที่เล็ก ๆ แห่งนี้ตั้งใจเตรียมไว้ให้ใครบางคนโดยเฉพาะ ขอให้วันนี้ของคุณเป็นวันที่ใจดีและอบอุ่นนะ ♡',
+    politeExitReadBtn: '',
   },
   stepB: {
     backBtn: 'กลับ',
     question: 'ลองพิสูจสิคุณเกิดวันที่เท่าไหร่',
+    yearRangeHint: 'รองรับการเลือกปี ค.ศ. 1950 – 2200',
     submitBtn: 'ยืนยัน',
+    skipToReadBtn: '',
     wrongDateMessage:
       'วันเกิดยังไม่ตรงกับคนที่เรากำลังรออยู่นะ ลองตรวจสอบวัน เดือน หรือปี ค.ศ. อีกครั้งได้เลย',
   },
@@ -178,37 +224,63 @@ export const UI_COPY: SiteCopy = {
     deskHintClosed: 'เลือกแตะซองจดหมายบนโต๊ะ หรือเปิดดูกล่องจดหมายด้านข้างได้เลย',
     birthdayEnvelopeTag: 'แตะเพื่อเปิดอ่าน',
     apologyEnvelopeTag: 'แตะเพื่อเปิดอ่าน',
+    extraEnvelopeTag: 'แตะเพื่อเปิดอ่าน',
+    skipOpenAnimBtn: 'ข้ามแอนิเมชัน',
+    continueDraftBtn: 'เขียนจดหมายฉบับร่างต่อ',
     mailboxBoxTitle: 'กล่องใส่จดหมาย',
-    mailboxSubtitle: 'แตะเลือกจดหมายเพื่อเปิดอ่าน',
+    mailboxSubtitle: 'แตะเลือกจดหมายเพื่อเปิดอ่านได้ทุกฉบับ',
+    letterCountUnit: 'ฉบับ',
     foldBackBtn: 'พับเก็บวางไว้บนโต๊ะ',
     writeReplyBtn: 'เขียนจดหมายตอบกลับ',
     writeNewReplyBtn: 'เขียนจดหมายฉบับใหม่',
     writeShortBtn: 'เขียนจดหมาย',
-    privacyFooterNote:
-      'จดหมายที่ตอบกลับจะถูกเก็บอย่างดี สาบานน ',
+    replySenderPrefix: 'จาก:',
+    untitledReplyLabel: 'จดหมายตอบกลับ',
+    emptyReplyBodyLabel: '(ยังไม่มีเนื้อหาในฉบับนี้)',
+    referenceIdLabel: 'รหัสอ้างอิง:',
+    editReplyBtn: 'แก้ไขจดหมายฉบับนี้',
+    syncedBadgeLabel: 'อ่านได้ทุกคน',
+    localDraftBadgeLabel: 'ฉบับร่างในเครื่อง',
+    privacyFooterNote: 'จดหมายที่ตอบกลับจะถูกเก็บอย่างดี สาบานน ',
   },
   stepD: {
     backBtn: 'กลับ',
     heading: 'เขียนจดหมายตอบกลับ',
     privacyNoticeBody:
-      'ข้อความที่คุณเขียนจะถูกส่งไปจัดเก็บอย่างเป็นส่วนตัวใน Google Drive ของเจ้าของเว็บไซต์ และเจ้าของสามารถเปิดอ่านได้ (ไม่เปิดไฟล์สาธารณะ และไม่เก็บ IP address)',
+      'เมื่อพับจดหมายใส่ซองแล้ว จดหมายของคุณจะวางอยู่ในกล่องเพื่อให้ทุกคนเปิดอ่านได้ร่วมกัน',
     deletionPolicyNote:
-      'กด "ล้างฉบับร่าง" เพื่อลบข้อความในเครื่องได้ตลอดเวลา หรือแจ้งรหัสอ้างอิงให้เจ้าของลบไฟล์ใน Drive ได้',
+      'กด "ล้างฉบับร่าง" เพื่อลบข้อความในเครื่องได้ตลอดเวลา',
     titleLabel: 'ชื่อจดหมาย *',
     titlePlaceholder: 'เช่น ขอบคุณนะ, เรื่องที่อยากบอก...',
     authorLabel: 'ชื่อผู้เขียน *',
     authorPlaceholder: 'เช่น คุณ',
     bodyLabel: 'เนื้อหา *',
     bodyPlaceholder: 'เขียนจดหมายของคุณที่นี่...',
+    savingStatusText: 'กำลังบันทึก...',
+    savedStatusText: 'บันทึกแล้ว',
+    offlineStatusText: 'ออฟไลน์ กำลังรอส่งข้อมูล',
+    errorStatusText: 'บันทึกไม่สำเร็จ',
+    autosaveHintText: 'บันทึกอัตโนมัติขณะพิมพ์',
+    retryInlineBtn: 'ลองบันทึกใหม่',
     clearDraftBtn: 'ล้างฉบับร่าง',
+    clearModalTitle: 'ต้องการล้างฉบับร่างในเครื่องใช่ไหม?',
+    clearModalBody:
+      'ข้อความที่พิมพ์ค้างไว้ในเบราว์เซอร์เครื่องนี้จะถูกล้างออกและเริ่มรหัสจดหมายฉบับใหม่',
+    clearModalCancelBtn: 'ยกเลิก',
+    clearModalConfirmBtn: 'ยืนยันล้างฉบับร่าง',
     finishAndFoldBtn: 'พับจดหมายใส่ซอง',
   },
   stepE: {
+    savingOverlayTitle: 'กำลังบันทึกข้อความฉบับล่าสุด...',
+    savingOverlayBody:
+      'รอสักครู่นะ เมื่อระบบยืนยันการบันทึกสำเร็จแล้ว จดหมายจะถูกพับเก็บเข้าซองโดยอัตโนมัติ',
     savedHeading: 'บันทึกแล้ว',
     savedSubheading: 'ขอบคุณที่เขียนจดหมายถึงฉันนะ',
     skipAnimationBtn: 'ข้ามแอนิเมชัน',
     thankYouTitle: 'ขอบคุณที่ยังอยู่ตรงนี้',
     thankYouSubtitle: 'และขอบคุณที่รับฟังฉัน...',
+    heartSymbol: '♡',
+    referenceCodeLabel: 'รหัสอ้างอิงจดหมาย:',
     backToDeskBtn: 'กลับไปที่โต๊ะจดหมาย',
     writeAnotherBtn: 'เขียนจดหมายเพิ่มอีกฉบับ',
     editAgainBtn: 'กลับไปดูหรือแก้ไขฉบับนี้',
@@ -216,6 +288,7 @@ export const UI_COPY: SiteCopy = {
     unsavedWarningBody:
       'เราเก็บข้อความของคุณไว้ในเครื่องอย่างปลอดภัยแล้ว ยังไม่หายไปไหน กรุณาตรวจสอบอินเทอร์เน็ตแล้วกดลองบันทึกใหม่อีกครั้งก่อนพับเก็บนะ',
     retrySaveBtn: 'ลองบันทึกใหม่อีกครั้ง',
+    backToWriteBtn: 'กลับไปหน้าเขียนจดหมาย',
   },
 };
 

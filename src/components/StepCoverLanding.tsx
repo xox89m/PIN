@@ -31,7 +31,7 @@ export function StepCoverLanding({ onStart }: StepCoverLandingProps) {
           <p>{copy.cover.subtitleLine2}</p>
         </div>
 
-        <div className="animate-scene-enter-delay-2 pt-8">
+        <div className="animate-scene-enter-delay-2 pt-7 flex flex-col items-center">
           <button
             type="button"
             onClick={onStart}

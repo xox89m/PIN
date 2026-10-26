@@ -25,6 +25,8 @@ export interface ReplyLetterDraft {
   lastSavedVersion: number;
   lastSavedIso: string | null;
   recoveryState: 'draft' | 'synced' | 'completed';
+  authorUid?: string;
+  isPublicCloud?: boolean;
 }
 
 export interface SaveBackendResponse {
@@ -164,7 +166,7 @@ export function loadDraftFromLocal(): ReplyLetterDraft {
     const parsed = JSON.parse(raw) as Partial<ReplyLetterDraft>;
     if (
       typeof parsed.letterId === 'string' &&
-      /^ltr_[a-zA-Z0-9_-]{8,64}$/.test(parsed.letterId)
+      /^[a-zA-Z0-9_-]{3,64}$/.test(parsed.letterId)
     ) {
       return {
         letterId: parsed.letterId,
@@ -184,6 +186,8 @@ export function loadDraftFromLocal(): ReplyLetterDraft {
           parsed.recoveryState === 'synced' || parsed.recoveryState === 'completed'
             ? parsed.recoveryState
             : 'draft',
+        authorUid: typeof parsed.authorUid === 'string' ? parsed.authorUid : undefined,
+        isPublicCloud: Boolean(parsed.isPublicCloud),
       };
     }
   } catch {
@@ -418,6 +422,7 @@ const LOCAL_SITE_COPY_KEY = 'to_you_site_copy_v1';
 export function cloneSiteCopy(source: SiteCopy): SiteCopy {
   return {
     siteTitle: source.siteTitle,
+    globalBars: { ...source.globalBars },
     cover: { ...source.cover },
     stepA: { ...source.stepA },
     stepB: { ...source.stepB },
@@ -434,6 +439,7 @@ export function mergeWithDefaultSiteCopy(partial: unknown): SiteCopy {
   const p = partial as Partial<SiteCopy>;
   return {
     siteTitle: typeof p.siteTitle === 'string' ? p.siteTitle : UI_COPY.siteTitle,
+    globalBars: { ...UI_COPY.globalBars, ...(p.globalBars || {}) },
     cover: { ...UI_COPY.cover, ...(p.cover || {}) },
     stepA: { ...UI_COPY.stepA, ...(p.stepA || {}) },
     stepB: { ...UI_COPY.stepB, ...(p.stepB || {}) },

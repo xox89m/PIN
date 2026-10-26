@@ -1,17 +1,21 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { useSiteCopy } from '../context/SiteCopyContext';
 import { ReplyLetterDraft, SaveStatus } from '../services/letterStorage';
+import { PublishResult } from '../services/cloudConfigSync';
 import {
   GoldenEnvelopeIllustration,
   HandDrawnPenIllustration,
 } from './EnvelopeIllustrations';
-import { RotateCw, AlertCircle, CheckCircle2 } from 'lucide-react';
+import { RotateCw, AlertCircle, CheckCircle2, Globe, Check } from 'lucide-react';
+import { soundEngine } from '../services/soundEngine';
 
 interface StepEFoldEnvelopeProps {
   draft: ReplyLetterDraft;
   saveStatus: SaveStatus;
   statusMessage: string;
   isCurrentVersionConfirmedSaved: boolean;
+  isReplySharedPublicly: boolean;
+  onPublishReplyToEveryone: () => Promise<PublishResult>;
   onRetryFinalSave: () => void;
   onBackToEditReply: () => void;
   onWriteAnotherLetter: () => void;
@@ -25,6 +29,8 @@ export function StepEFoldEnvelope({
   saveStatus,
   statusMessage,
   isCurrentVersionConfirmedSaved,
+  isReplySharedPublicly,
+  onPublishReplyToEveryone,
   onRetryFinalSave,
   onBackToEditReply,
   onWriteAnotherLetter,
@@ -32,6 +38,8 @@ export function StepEFoldEnvelope({
 }: StepEFoldEnvelopeProps) {
   const copy = useSiteCopy();
   const [animPhase, setAnimPhase] = useState<FoldAnimPhase>('verifying_save');
+  const [isSharing, setIsSharing] = useState(false);
+  const [shareFeedback, setShareFeedback] = useState('');
   const foldTimerRef = useRef<number | null>(null);
 
   const clearTimers = () => {
@@ -66,7 +74,6 @@ export function StepEFoldEnvelope({
 
   return (
     <section className="relative w-full max-w-2xl mx-auto px-5 py-8 flex flex-col items-center justify-center min-h-[78vh] text-center">
-      {/* กรณีที่ 1: กำลังบันทึกฉบับล่าสุดอยู่ */}
       {saveStatus === SaveStatus.SAVING && (
         <div
           className="px-8 py-10 rounded-3xl bg-black/55 backdrop-blur-md border border-[#E8DDD0]/20 space-y-4 max-w-md w-full"
@@ -74,15 +81,14 @@ export function StepEFoldEnvelope({
         >
           <RotateCw className="w-8 h-8 mx-auto text-[#F0D5A8] animate-spin" />
           <h2 className="font-display text-xl sm:text-2xl font-semibold text-[#F6EFE6]">
-            กำลังบันทึกข้อความฉบับล่าสุด...
+            {copy.stepE.savingOverlayTitle}
           </h2>
           <p className="text-sm text-[#E8DDD0]/80 leading-relaxed">
-            รอสักครู่นะ เมื่อระบบยืนยันการบันทึกสำเร็จแล้ว จดหมายจะถูกพับเก็บเข้าซองโดยอัตโนมัติ
+            {copy.stepE.savingOverlayBody}
           </p>
         </div>
       )}
 
-      {/* กรณีที่ 2: ยังบันทึกไม่สำเร็จ หรือ ออฟไลน์ */}
       {saveStatus !== SaveStatus.SAVING && !isCurrentVersionConfirmedSaved && (
         <div
           className="px-7 py-8 rounded-3xl bg-[#241411]/85 backdrop-blur-md border border-[#E5988E]/40 space-y-5 max-w-lg w-full"
@@ -104,7 +110,7 @@ export function StepEFoldEnvelope({
             </p>
             {statusMessage && (
               <p className="text-xs sm:text-sm font-medium text-[#F5B5AC] pt-1">
-                รายละเอียด: {statusMessage}
+                {statusMessage}
               </p>
             )}
           </div>
@@ -122,13 +128,12 @@ export function StepEFoldEnvelope({
               onClick={onBackToEditReply}
               className="night-glass-btn w-full sm:w-auto min-h-[48px] px-6 py-2.5 text-base font-medium whitespace-nowrap shrink-0 cursor-pointer"
             >
-              กลับไปหน้าเขียนจดหมาย
+              {copy.stepE.backToWriteBtn}
             </button>
           </div>
         </div>
       )}
 
-      {/* กรณีที่ 3: บันทึกสำเร็จแล้ว -> แสดงหน้า "บันทึกแล้ว" และแอนิเมชันพับจดหมายลงซองทอง */}
       {isCurrentVersionConfirmedSaved && animPhase === 'folding_paper' && (
         <div className="animate-scene-enter w-full space-y-6 py-4" aria-live="polite">
           <div className="space-y-2">
@@ -172,7 +177,6 @@ export function StepEFoldEnvelope({
         </div>
       )}
 
-      {/* กรณีที่ 4: พับใส่ซองปิดผนึกหัวใจเรียบร้อย */}
       {isCurrentVersionConfirmedSaved && animPhase === 'sealed_done' && (
         <div className="animate-scene-enter w-full space-y-6 py-4" aria-live="polite">
           <div className="space-y-2">
@@ -184,7 +188,11 @@ export function StepEFoldEnvelope({
               <br />
               {copy.stepE.thankYouSubtitle}
             </h2>
-            <p className="text-xl text-[#F5CA7B] animate-heart-warmth">♡</p>
+            {copy.stepE.heartSymbol.trim() !== '' && (
+              <p className="text-xl text-[#F5CA7B] animate-heart-warmth">
+                {copy.stepE.heartSymbol}
+              </p>
+            )}
           </div>
 
           <div className="max-w-[290px] mx-auto pt-2 animate-envelope-idle">
@@ -201,10 +209,47 @@ export function StepEFoldEnvelope({
           </div>
 
           <p className="text-xs text-[#E8DDD0]/65 tabular-nums">
-            รหัสอ้างอิงจดหมาย: <span className="font-mono">{draft.letterId}</span>
+            {copy.stepE.referenceCodeLabel}{' '}
+            <span className="font-mono">{draft.letterId}</span>
           </p>
 
-          <div className="flex flex-col sm:flex-row flex-wrap items-center justify-center gap-3 pt-2">
+          {isReplySharedPublicly ? (
+            <p className="inline-flex items-center gap-1.5 text-xs text-[#C6F2D2]">
+              <Check className="w-4 h-4 shrink-0" aria-hidden="true" />
+              <span>วางไว้ในกล่องจดหมายกลางแล้ว ทุกคนสามารถเปิดอ่านได้</span>
+            </p>
+          ) : (
+            <div className="space-y-1.5">
+              <button
+                type="button"
+                disabled={isSharing}
+                onClick={() => {
+                  setIsSharing(true);
+                  setShareFeedback('');
+                  soundEngine.playSoftTapSfx();
+                  void onPublishReplyToEveryone().then((res) => {
+                    setIsSharing(false);
+                    if (!res.ok && res.errorMessage) {
+                      setShareFeedback(res.errorMessage);
+                    }
+                  });
+                }}
+                className="night-glass-btn inline-flex items-center justify-center gap-2 min-h-[42px] px-5 py-2 text-xs sm:text-sm text-[#F7DFB2] whitespace-nowrap cursor-pointer disabled:opacity-50"
+              >
+                <Globe className="w-4 h-4 shrink-0" aria-hidden="true" />
+                <span>
+                  {isSharing
+                    ? 'กำลังวางจดหมายลงกล่องกลาง...'
+                    : 'วางจดหมายฉบับนี้ลงกล่องกลางให้ทุกคนอ่านได้'}
+                </span>
+              </button>
+              {shareFeedback && (
+                <p className="text-xs text-[#FADCD8]">{shareFeedback}</p>
+              )}
+            </div>
+          )}
+
+          <div className="flex flex-col sm:flex-row flex-wrap items-center justify-center gap-3 pt-1">
             <button
               type="button"
               onClick={onReturnToDesk}

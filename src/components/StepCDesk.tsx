@@ -19,7 +19,9 @@ import {
   ArrowLeft,
   Check,
   Eye,
+  Globe,
   Home,
+  LogIn,
   Mail,
   Paperclip,
   Pencil,
@@ -27,6 +29,7 @@ import {
   Plus,
   RotateCcw,
   Save,
+  ShieldCheck,
   Trash2,
   UploadCloud,
 } from 'lucide-react';
@@ -48,14 +51,19 @@ const IGNORED_MODIFIER_KEYS = new Set([
 
 interface StepCDeskProps {
   isAdmin: boolean;
+  isCloudAdminVerified: boolean;
+  currentUserUid: string | null;
   ownerLetters: LetterDocument[];
   currentDraft: ReplyLetterDraft;
   sentLetters: ReplyLetterDraft[];
+  sharedReplies: ReplyLetterDraft[];
+  onOpenAdminLoginModal: () => void;
   onSaveOwnerLetter: (updatedDoc: LetterDocument) => Promise<PublishResult>;
   onDeleteExtraOwnerLetter: (docId: string) => Promise<PublishResult>;
   onResetOwnerLetters: () => Promise<PublishResult>;
-  onAdminSaveReplyLetter: (updatedReply: ReplyLetterDraft) => Promise<boolean>;
-  onAdminDeleteReplyLetter: (letterId: string) => void;
+  onAdminSaveReplyLetter: (updatedReply: ReplyLetterDraft) => Promise<PublishResult>;
+  onAdminDeleteReplyLetter: (letterId: string) => Promise<PublishResult>;
+  onVisitorPublishReplyToEveryone: (reply: ReplyLetterDraft) => Promise<PublishResult>;
   onReturnToCover: () => void;
   onExitAdminMode: () => void;
   onContinueOrStartReply: () => void;
@@ -109,14 +117,19 @@ function formatThaiTimestamp(iso: string | null | undefined): string {
 
 export function StepCDesk({
   isAdmin,
+  isCloudAdminVerified,
+  currentUserUid,
   ownerLetters,
   currentDraft,
   sentLetters,
+  sharedReplies,
+  onOpenAdminLoginModal,
   onSaveOwnerLetter,
   onDeleteExtraOwnerLetter,
   onResetOwnerLetters,
   onAdminSaveReplyLetter,
   onAdminDeleteReplyLetter,
+  onVisitorPublishReplyToEveryone,
   onReturnToCover,
   onExitAdminMode,
   onContinueOrStartReply,
@@ -130,6 +143,7 @@ export function StepCDesk({
   const [adminSaveFeedback, setAdminSaveFeedback] = useState<string>('');
   const [adminSaveIsError, setAdminSaveIsError] = useState<boolean>(false);
   const [isSavingAdminEdit, setIsSavingAdminEdit] = useState<boolean>(false);
+  const [isSharingVisitorReply, setIsSharingVisitorReply] = useState<boolean>(false);
   const [confirmResetModalOpen, setConfirmResetModalOpen] = useState<boolean>(false);
 
   const animTimerRef = useRef<number | null>(null);
@@ -143,7 +157,6 @@ export function StepCDesk({
     };
   }, []);
 
-  // ดึงจดหมายหลักทั้ง 2 ซองจากรายการของแอดมิน (อัปเดตชื่อซองและเนื้อหาทันทีเมื่อแอดมินแก้)
   const apologyDoc = useMemo(
     () =>
       ownerLetters.find((d) => d.id === 'apology') || APOLOGY_LETTER_CONTENT,
@@ -156,31 +169,57 @@ export function StepCDesk({
     [ownerLetters]
   );
 
-  // รวมรายการจดหมายตอบกลับของผู้เข้าชม
+  const extraOwnerDocs = useMemo(
+    () => ownerLetters.filter((d) => d.id !== 'apology' && d.id !== 'birthday'),
+    [ownerLetters]
+  );
+
+  const localLetterIdSet = useMemo(() => {
+    const ids = new Set<string>();
+    if (currentDraft.title.trim() || currentDraft.body.trim()) {
+      ids.add(currentDraft.letterId);
+    }
+    for (const s of sentLetters) {
+      ids.add(s.letterId);
+    }
+    return ids;
+  }, [currentDraft, sentLetters]);
+
+  // รวมจดหมายตอบกลับทั้งจากกล่องกลางออนไลน์ (ทุกคนอ่านได้) และฉบับในเครื่อง
   const userReplyLetters = useMemo(() => {
     const map = new Map<string, ReplyLetterDraft>();
+
+    for (const cloudItem of sharedReplies) {
+      map.set(cloudItem.letterId, { ...cloudItem, isPublicCloud: true });
+    }
+
+    const mergeCandidate = (item: ReplyLetterDraft) => {
+      const existing = map.get(item.letterId);
+      if (!existing) {
+        map.set(item.letterId, item);
+      } else if (item.version > existing.version) {
+        map.set(item.letterId, {
+          ...item,
+          authorUid: item.authorUid || existing.authorUid,
+          isPublicCloud: Boolean(item.isPublicCloud || existing.isPublicCloud),
+        });
+      }
+    };
+
+    for (const item of sentLetters) {
+      mergeCandidate(item);
+    }
 
     const hasCurrentContent =
       Boolean(currentDraft.title.trim()) || Boolean(currentDraft.body.trim());
     if (hasCurrentContent) {
-      map.set(currentDraft.letterId, currentDraft);
-    }
-
-    for (const item of sentLetters) {
-      if (!map.has(item.letterId)) {
-        map.set(item.letterId, item);
-      } else {
-        const existing = map.get(item.letterId)!;
-        if (item.version >= existing.version) {
-          map.set(item.letterId, item);
-        }
-      }
+      mergeCandidate(currentDraft);
     }
 
     return Array.from(map.values()).sort((a, b) =>
       b.lastModifiedIso.localeCompare(a.lastModifiedIso)
     );
-  }, [currentDraft, sentLetters]);
+  }, [sharedReplies, sentLetters, currentDraft]);
 
   const totalLetterCount = ownerLetters.length + userReplyLetters.length;
 
@@ -195,6 +234,19 @@ export function StepCDesk({
       userReplyLetters.find((r) => r.letterId === selectedItem.letterId) || null
     );
   }, [selectedItem, userReplyLetters]);
+
+  const canVisitorEditActiveReply = useMemo(() => {
+    if (!activeReplyDoc) return false;
+    if (localLetterIdSet.has(activeReplyDoc.letterId)) return true;
+    if (
+      currentUserUid &&
+      activeReplyDoc.authorUid &&
+      activeReplyDoc.authorUid === currentUserUid
+    ) {
+      return true;
+    }
+    return false;
+  }, [activeReplyDoc, localLetterIdSet, currentUserUid]);
 
   const openOwnerLetterWithAnim = (doc: LetterDocument) => {
     setAdminEditor(null);
@@ -261,7 +313,6 @@ export function StepCDesk({
     setSelectedItem(null);
   };
 
-  // เปิดหน้าแก้ไขสำหรับแอดมิน (จดหมายของแอดมิน)
   const startAdminEditOwnerDoc = (doc: LetterDocument) => {
     soundEngine.playPaperOpenSfx();
     setOpeningTarget(null);
@@ -281,7 +332,6 @@ export function StepCDesk({
     readerTopRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   };
 
-  // เพิ่มจดหมายฉบับใหม่จากแอดมินลงในกล่อง
   const startAdminCreateNewOwnerDoc = () => {
     soundEngine.playPaperOpenSfx();
     const newId = `note_${Date.now().toString(36)}`;
@@ -293,7 +343,7 @@ export function StepCDesk({
       id: newId,
       letterTitle: 'จดหมายฉบับใหม่ถึงคุณ',
       senderLabel: 'จาก: ฉัน',
-      dateLabel: 'ข้อความเพิ่มเติม',
+      dateLabel: 'ถึงคุณ',
       salutation: 'ถึงคุณ...',
       bodyText: '',
       signOff: 'ด้วยความปรารถนาดี',
@@ -303,7 +353,6 @@ export function StepCDesk({
     readerTopRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   };
 
-  // เปิดหน้าแก้ไขสำหรับแอดมิน (จดหมายตอบกลับในกล่อง)
   const startAdminEditReplyDoc = (reply: ReplyLetterDraft) => {
     soundEngine.playPaperOpenSfx();
     setOpeningTarget(null);
@@ -338,12 +387,12 @@ export function StepCDesk({
         id: adminEditor.id,
         isOwnerApprovedForProduction: true,
         letterTitle: adminEditor.letterTitle.trim() || 'จดหมายถึงคุณ',
-        senderLabel: adminEditor.senderLabel.trim() || 'จาก: ฉัน',
-        dateLabel: adminEditor.dateLabel.trim() || 'ถึงคุณคนสำคัญ',
-        salutation: adminEditor.salutation.trim() || 'ถึงคุณ...',
+        senderLabel: adminEditor.senderLabel.trim(),
+        dateLabel: adminEditor.dateLabel.trim(),
+        salutation: adminEditor.salutation.trim(),
         paragraphs: paragraphs.length > 0 ? paragraphs : [''],
-        signOff: adminEditor.signOff.trim() || 'ด้วยความจริงใจ',
-        senderName: adminEditor.senderName.trim() || 'ฉัน',
+        signOff: adminEditor.signOff.trim(),
+        senderName: adminEditor.senderName.trim(),
       };
 
       const res = await onSaveOwnerLetter(updatedDoc);
@@ -359,29 +408,35 @@ export function StepCDesk({
         setAdminSaveIsError(true);
         setAdminSaveFeedback(
           res.errorMessage ||
-            'บันทึกไว้ในเครื่องแล้ว กดปุ่มบันทึกอีกครั้งเพื่อซิงก์ออนไลน์ให้ทุกคนเห็น'
+            'บันทึกไว้ในเครื่องแล้ว กดบันทึกอีกครั้งเพื่อซิงก์ออนไลน์ให้ทุกคนเห็น'
         );
       }
     } else {
       const nextVersion = adminEditor.original.version + 1;
       const updatedReply: ReplyLetterDraft = {
         ...adminEditor.original,
-        title: adminEditor.title.trim() || 'จดหมายตอบกลับ',
+        title: adminEditor.title.trim() || copy.stepC.untitledReplyLabel || 'จดหมายตอบกลับ',
         author: adminEditor.author.trim() || 'คุณ',
         body: adminEditor.body,
         version: nextVersion,
         lastModifiedIso: new Date().toISOString(),
       };
-      const synced = await onAdminSaveReplyLetter(updatedReply);
+      const res = await onAdminSaveReplyLetter(updatedReply);
       setIsSavingAdminEdit(false);
       setSelectedItem({ kind: 'reply', letterId: updatedReply.letterId });
-      setAdminEditor(null);
-      setAdminSaveIsError(false);
-      setAdminSaveFeedback(
-        synced
-          ? 'บันทึกการแก้ไขจดหมายและซิงก์ไปยัง Google Drive เรียบร้อยแล้ว'
-          : 'บันทึกการแก้ไขจดหมายในเครื่องเรียบร้อยแล้ว'
-      );
+      if (res.ok) {
+        setAdminEditor(null);
+        setAdminSaveIsError(false);
+        setAdminSaveFeedback(
+          'บันทึกการแก้ไขจดหมายและอัปเดตในกล่องกลางให้ทุกคนอ่านเห็นตรงกันแล้ว'
+        );
+      } else {
+        setAdminEditor(null);
+        setAdminSaveIsError(true);
+        setAdminSaveFeedback(
+          res.errorMessage || 'บันทึกไว้ในเครื่องแล้ว (เชื่อมต่อผู้ดูแลเพื่อซิงก์ให้ทุกคนเห็น)'
+        );
+      }
     }
   };
 
@@ -410,19 +465,43 @@ export function StepCDesk({
 
   return (
     <section className="w-full max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-10 space-y-6">
-      {/* แถบเครื่องมือโหมดแอดมิน (แสดงเฉพาะเมื่อเข้าด้วยวันเกิดแอดมิน 28 สิงหาคม 2111) */}
       {isAdmin && (
         <div className="rounded-2xl bg-[#1C1510]/88 backdrop-blur-md border border-[#E5B968]/45 px-4 sm:px-6 py-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-xl">
           <div className="space-y-0.5">
             <p className="font-display text-sm sm:text-base font-semibold text-[#F7DFB2]">
-              โหมดแอดมิน (ผู้สร้างเว็บไซต์)
+              โหมดผู้ดูแล (แก้ไขได้ทุกคำและจดหมายทุกฉบับ)
             </p>
             <p className="text-xs text-[#E8DDD0]/80">
-              กดไอคอนดินสอท้ายรายชื่อจดหมายในกล่องด้านข้าง หรือเปิดซองแล้วกดแก้ไข เพื่อเปลี่ยนชื่อและเนื้อหาจดหมายได้ทุกฉบับ
+              กดไอคอนดินสอท้ายชื่อจดหมายในกล่องด้านข้าง หรือเปิดอ่านแล้วกดแก้ไข เพื่อเปลี่ยนชื่อ ผู้เขียน และเนื้อหาจดหมายได้ทุกฉบับของทุกคน
             </p>
           </div>
 
           <div className="flex flex-wrap items-center gap-2 shrink-0">
+            <button
+              type="button"
+              onClick={() => {
+                soundEngine.playSoftTapSfx();
+                onOpenAdminLoginModal();
+              }}
+              className={`inline-flex items-center gap-1.5 min-h-[40px] px-3.5 py-1.5 text-xs font-medium whitespace-nowrap cursor-pointer ${
+                isCloudAdminVerified
+                  ? 'night-glass-btn text-[#C6F2D2]'
+                  : 'night-glass-btn-active text-[#F7DFB2]'
+              }`}
+            >
+              {isCloudAdminVerified ? (
+                <>
+                  <ShieldCheck className="w-3.5 h-3.5 text-[#9CE3B0]" aria-hidden="true" />
+                  <span>ล็อกอินแล้ว (ผู้ดูแล)</span>
+                </>
+              ) : (
+                <>
+                  <LogIn className="w-3.5 h-3.5 text-[#F5CA7B]" aria-hidden="true" />
+                  <span>{copy.globalBars.adminLoginBtn.trim() || 'ล็อกอินผู้ดูแล'}</span>
+                </>
+              )}
+            </button>
+
             <button
               type="button"
               onClick={onReturnToCover}
@@ -457,7 +536,7 @@ export function StepCDesk({
                 setAdminEditor(null);
                 onExitAdminMode();
               }}
-              className="night-glass-btn-active inline-flex items-center gap-1.5 min-h-[40px] px-4 py-1.5 text-xs font-medium whitespace-nowrap cursor-pointer"
+              className="night-glass-btn inline-flex items-center gap-1.5 min-h-[40px] px-4 py-1.5 text-xs font-medium whitespace-nowrap cursor-pointer"
             >
               <Eye className="w-3.5 h-3.5" aria-hidden="true" />
               <span>สลับดูมุมมองผู้รับ</span>
@@ -488,9 +567,7 @@ export function StepCDesk({
         ref={readerTopRef}
         className="grid grid-cols-1 lg:grid-cols-12 gap-8 lg:gap-10 items-start"
       >
-        {/* พื้นที่หลักฝั่งซ้าย/กลาง */}
         <div className="lg:col-span-7 xl:col-span-8">
-          {/* กรณีที่ 1: แอดมินกำลังเปิดฟอร์มแก้ไขชื่อ/เนื้อหาจดหมาย */}
           {isAdmin && adminEditor ? (
             <form
               onSubmit={(e) => {
@@ -503,8 +580,8 @@ export function StepCDesk({
                   <Pencil className="w-5 h-5 text-[#4A3525]" aria-hidden="true" />
                   <h2 className="font-display text-lg sm:text-xl font-semibold text-[#2B1F16]">
                     {adminEditor.kind === 'owner' && adminEditor.isNew
-                      ? 'สร้างจดหมายใหม่ของแอดมิน'
-                      : 'แก้ไขชื่อและเนื้อหาจดหมาย'}
+                      ? 'สร้างจดหมายใหม่บนโต๊ะ'
+                      : 'แก้ไขชื่อ ผู้เขียน และเนื้อหาจดหมาย'}
                   </h2>
                 </div>
 
@@ -575,7 +652,7 @@ export function StepCDesk({
                         htmlFor="admin-date-label"
                         className="block text-sm font-semibold text-[#2B1F16]"
                       >
-                        คำกำกับ / วันที่ (เช่น 28 ต.ค. 2026)
+                        คำกำกับ / วันที่ (แสดงในกล่องและหัวจดหมาย)
                       </label>
                       <input
                         id="admin-date-label"
@@ -729,13 +806,12 @@ export function StepCDesk({
                     >
                       <Save className="w-4 h-4" aria-hidden="true" />
                       <span>
-                        {isSavingAdminEdit ? 'กำลังบันทึก...' : 'บันทึกการแก้ไข'}
+                        {isSavingAdminEdit ? 'กำลังบันทึก...' : 'บันทึกให้ทุกคนเห็นตรงกัน'}
                       </span>
                     </button>
                   </div>
                 </>
               ) : (
-                /* แก้ไขชื่อและเนื้อหาจดหมายตอบกลับในกล่อง */
                 <>
                   <div className="space-y-1.5">
                     <label
@@ -813,14 +889,22 @@ export function StepCDesk({
                     <button
                       type="button"
                       onClick={() => {
-                        onAdminDeleteReplyLetter(adminEditor.original.letterId);
+                        const targetId = adminEditor.original.letterId;
                         setAdminEditor(null);
                         setSelectedItem(null);
+                        void onAdminDeleteReplyLetter(targetId).then((res) => {
+                          setAdminSaveIsError(!res.ok);
+                          setAdminSaveFeedback(
+                            res.ok
+                              ? 'ลบจดหมายฉบับนี้ออกจากกล่องเรียบร้อยแล้ว'
+                              : res.errorMessage || 'ลบจดหมายออกจากเครื่องแล้ว'
+                          );
+                        });
                       }}
                       className="inline-flex items-center gap-1.5 min-h-[44px] px-3 py-2 text-xs sm:text-sm text-[#7A241B] hover:underline cursor-pointer"
                     >
                       <Trash2 className="w-4 h-4" aria-hidden="true" />
-                      <span>นำออกจากกล่องในเครื่องนี้</span>
+                      <span>ลบจดหมายฉบับนี้</span>
                     </button>
 
                     <button
@@ -830,7 +914,7 @@ export function StepCDesk({
                     >
                       <Save className="w-4 h-4" aria-hidden="true" />
                       <span>
-                        {isSavingAdminEdit ? 'กำลังบันทึก...' : 'บันทึกการแก้ไข'}
+                        {isSavingAdminEdit ? 'กำลังบันทึก...' : 'บันทึกให้ทุกคนเห็นตรงกัน'}
                       </span>
                     </button>
                   </div>
@@ -838,7 +922,6 @@ export function StepCDesk({
               )}
             </form>
           ) : !selectedItem ? (
-            /* กรณีที่ 2: โต๊ะวางซองจดหมายทั้ง 2 ฉบับ */
             <div className="animate-scene-enter flex flex-col justify-between min-h-[68vh] space-y-8 py-2">
               <div className="space-y-1.5 text-center lg:text-left">
                 <h1 className="font-display text-2xl sm:text-3xl font-semibold text-[#F6EFE6] drop-shadow-[0_3px_14px_rgba(0,0,0,0.85)]">
@@ -850,7 +933,6 @@ export function StepCDesk({
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-8 sm:gap-6 items-end pt-2">
-                {/* ซองที่ 1: จดหมายวันเกิดข้างแก้วกาแฟ */}
                 <div className="flex flex-col items-center text-center space-y-2.5">
                   <CoffeeAndBirthdayEnvelopeIllustration
                     isOpen={openingTarget === 'birthday'}
@@ -877,7 +959,6 @@ export function StepCDesk({
                   </div>
                 </div>
 
-                {/* ซองที่ 2: จดหมายขอโทษสีเหลืองทอง */}
                 <div className="flex flex-col items-center text-center space-y-2.5">
                   <GoldenEnvelopeIllustration
                     isOpen={openingTarget === 'apology'}
@@ -908,6 +989,46 @@ export function StepCDesk({
                 </div>
               </div>
 
+              {extraOwnerDocs.length > 0 && (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2">
+                  {extraOwnerDocs.map((extraDoc) => (
+                    <div
+                      key={extraDoc.id}
+                      className="rounded-xl bg-[#1A1410]/80 backdrop-blur-md border border-[#EBD8C0]/30 p-3.5 flex items-center justify-between gap-3"
+                    >
+                      <button
+                        type="button"
+                        onClick={() => openOwnerLetterWithAnim(extraDoc)}
+                        className="flex-1 min-w-0 flex items-center gap-3 text-left cursor-pointer"
+                      >
+                        <MiniEnvelopeIcon
+                          variant="gold"
+                          className="w-10 h-8 shrink-0"
+                        />
+                        <div className="min-w-0">
+                          <p className="font-display text-sm sm:text-base font-semibold text-[#FAF2E8] truncate">
+                            {extraDoc.letterTitle}
+                          </p>
+                          <p className="text-xs text-[#E8DDD0]/75 truncate">
+                            {copy.stepC.extraEnvelopeTag}
+                          </p>
+                        </div>
+                      </button>
+                      {isAdmin && (
+                        <button
+                          type="button"
+                          onClick={() => startAdminEditOwnerDoc(extraDoc)}
+                          aria-label={`แก้ไข ${extraDoc.letterTitle}`}
+                          className="min-h-[38px] min-w-[38px] inline-flex items-center justify-center rounded-lg text-[#F7DFB2] hover:bg-white/10 cursor-pointer shrink-0"
+                        >
+                          <Pencil className="w-4 h-4" aria-hidden="true" />
+                        </button>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+
               <div className="pt-2 flex flex-wrap items-center justify-center lg:justify-start gap-4">
                 {openingTarget !== null && (
                   <button
@@ -915,7 +1036,7 @@ export function StepCDesk({
                     onClick={handleSkipOpenAnimation}
                     className="min-h-[44px] px-4 py-2 text-sm text-[#E8DDD0] underline underline-offset-4 cursor-pointer whitespace-nowrap shrink-0"
                   >
-                    ข้ามแอนิเมชัน
+                    {copy.stepC.skipOpenAnimBtn}
                   </button>
                 )}
 
@@ -927,14 +1048,13 @@ export function StepCDesk({
                   <PenLine className="w-4 h-4" aria-hidden="true" />
                   <span>
                     {hasActiveUnsealedDraft
-                      ? 'เขียนจดหมายฉบับร่างต่อ'
+                      ? copy.stepC.continueDraftBtn
                       : copy.stepC.writeReplyBtn}
                   </span>
                 </button>
               </div>
             </div>
           ) : (
-            /* กรณีที่ 3: โหมดเปิดอ่านเนื้อหาจดหมายบนกระดาษวินเทจ */
             <div className="space-y-4">
               <div className="flex items-center justify-between gap-3">
                 <button
@@ -986,7 +1106,9 @@ export function StepCDesk({
                         </h2>
                         <p className="text-xs sm:text-sm text-[#5A4636]">
                           <span>{activeOwnerDoc.senderLabel}</span>
-                          <span aria-hidden="true"> · </span>
+                          {activeOwnerDoc.senderLabel && activeOwnerDoc.dateLabel && (
+                            <span aria-hidden="true"> · </span>
+                          )}
                           <span>{activeOwnerDoc.dateLabel}</span>
                         </p>
                       </div>
@@ -994,9 +1116,11 @@ export function StepCDesk({
                   </header>
 
                   <div className="space-y-5 text-[15.5px] sm:text-[16.5px] leading-[1.9] text-[#2B1F16]">
-                    <p className="font-display font-semibold text-base sm:text-lg">
-                      {activeOwnerDoc.salutation}
-                    </p>
+                    {activeOwnerDoc.salutation && (
+                      <p className="font-display font-semibold text-base sm:text-lg">
+                        {activeOwnerDoc.salutation}
+                      </p>
+                    )}
 
                     {activeOwnerDoc.paragraphs.map((paragraph, idx) => (
                       <p key={idx} className="whitespace-pre-line break-words">
@@ -1007,12 +1131,16 @@ export function StepCDesk({
 
                   <footer className="mt-10 pt-6 border-t border-[#5C442E]/20 flex flex-col sm:flex-row sm:items-end justify-between gap-6">
                     <div className="space-y-1 text-[#2B1F16]">
-                      <p className="text-sm sm:text-base text-[#4A3525]">
-                        {activeOwnerDoc.signOff}
-                      </p>
-                      <p className="font-display text-base sm:text-lg font-semibold">
-                        {activeOwnerDoc.senderName}
-                      </p>
+                      {activeOwnerDoc.signOff && (
+                        <p className="text-sm sm:text-base text-[#4A3525]">
+                          {activeOwnerDoc.signOff}
+                        </p>
+                      )}
+                      {activeOwnerDoc.senderName && (
+                        <p className="font-display text-base sm:text-lg font-semibold">
+                          {activeOwnerDoc.senderName}
+                        </p>
+                      )}
                     </div>
 
                     <div className="flex flex-wrap items-center gap-3">
@@ -1051,10 +1179,14 @@ export function StepCDesk({
                       />
                       <div className="space-y-0.5">
                         <h2 className="font-display text-lg sm:text-xl font-semibold text-[#2B1F16]">
-                          {activeReplyDoc.title.trim() || 'จดหมายไม่มีชื่อเรื่อง'}
+                          {activeReplyDoc.title.trim() ||
+                            copy.stepC.untitledReplyLabel}
                         </h2>
                         <p className="text-xs sm:text-sm text-[#5A4636] tabular-nums">
-                          <span>จาก: {activeReplyDoc.author.trim() || 'คุณ'}</span>
+                          <span>
+                            {copy.stepC.replySenderPrefix}{' '}
+                            {activeReplyDoc.author.trim() || 'คุณ'}
+                          </span>
                           <span aria-hidden="true"> · </span>
                           <span>
                             {formatThaiTimestamp(
@@ -1068,30 +1200,65 @@ export function StepCDesk({
                   </header>
 
                   <div className="min-h-[180px] text-[15.5px] sm:text-[16.5px] leading-[1.9] text-[#2B1F16] whitespace-pre-wrap break-words">
-                    {activeReplyDoc.body.trim() || '(ยังไม่มีเนื้อหาในฉบับนี้)'}
+                    {activeReplyDoc.body.trim() || copy.stepC.emptyReplyBodyLabel}
                   </div>
 
                   <footer className="mt-10 pt-6 border-t border-[#5C442E]/20 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                     <p className="text-xs text-[#5A4636] tabular-nums">
-                      รหัสอ้างอิง:{' '}
+                      {copy.stepC.referenceIdLabel}{' '}
                       <span className="font-mono">{activeReplyDoc.letterId}</span>
                     </p>
 
                     <div className="flex flex-wrap items-center gap-3">
-                      <button
-                        type="button"
-                        onClick={() =>
-                          isAdmin
-                            ? startAdminEditReplyDoc(activeReplyDoc)
-                            : onEditSpecificReply(activeReplyDoc)
-                        }
-                        className="parchment-action-btn inline-flex items-center justify-center gap-2 min-h-[44px] px-5 py-2.5 text-sm font-medium whitespace-nowrap shrink-0 cursor-pointer"
-                      >
-                        <PenLine className="w-4 h-4" aria-hidden="true" />
-                        <span>
-                          {isAdmin ? 'เปลี่ยนชื่อ / แก้ไขจดหมายนี้' : 'แก้ไขจดหมายฉบับนี้'}
-                        </span>
-                      </button>
+                      {!activeReplyDoc.isPublicCloud && canVisitorEditActiveReply && (
+                        <button
+                          type="button"
+                          disabled={isSharingVisitorReply}
+                          onClick={() => {
+                            setIsSharingVisitorReply(true);
+                            soundEngine.playSoftTapSfx();
+                            void onVisitorPublishReplyToEveryone(activeReplyDoc).then(
+                              (res) => {
+                                setIsSharingVisitorReply(false);
+                                setAdminSaveIsError(!res.ok);
+                                setAdminSaveFeedback(
+                                  res.ok
+                                    ? 'วางจดหมายลงกล่องกลางให้ทุกคนเปิดอ่านได้แล้ว'
+                                    : res.errorMessage || ''
+                                );
+                              }
+                            );
+                          }}
+                          className="min-h-[44px] px-4 py-2 rounded-full border border-[#4A3525]/45 text-xs sm:text-sm font-medium text-[#2B1F16] hover:bg-[#4A3525]/10 inline-flex items-center gap-1.5 whitespace-nowrap cursor-pointer disabled:opacity-50"
+                        >
+                          <Globe className="w-4 h-4" aria-hidden="true" />
+                          <span>
+                            {isSharingVisitorReply
+                              ? 'กำลังแชร์...'
+                              : 'วางลงกล่องกลางให้ทุกคนอ่านได้'}
+                          </span>
+                        </button>
+                      )}
+
+                      {isAdmin ? (
+                        <button
+                          type="button"
+                          onClick={() => startAdminEditReplyDoc(activeReplyDoc)}
+                          className="parchment-action-btn inline-flex items-center justify-center gap-2 min-h-[44px] px-5 py-2.5 text-sm font-medium whitespace-nowrap shrink-0 cursor-pointer"
+                        >
+                          <PenLine className="w-4 h-4" aria-hidden="true" />
+                          <span>เปลี่ยนชื่อ / แก้ไขจดหมายนี้</span>
+                        </button>
+                      ) : canVisitorEditActiveReply ? (
+                        <button
+                          type="button"
+                          onClick={() => onEditSpecificReply(activeReplyDoc)}
+                          className="parchment-action-btn inline-flex items-center justify-center gap-2 min-h-[44px] px-5 py-2.5 text-sm font-medium whitespace-nowrap shrink-0 cursor-pointer"
+                        >
+                          <PenLine className="w-4 h-4" aria-hidden="true" />
+                          <span>{copy.stepC.editReplyBtn}</span>
+                        </button>
+                      ) : null}
                     </div>
                   </footer>
                 </article>
@@ -1100,9 +1267,8 @@ export function StepCDesk({
           )}
         </div>
 
-            {/* พื้นที่ด้านข้าง (ขวา): กล่องใส่จดหมาย */}
         <aside
-          aria-label="กล่องใส่จดหมาย"
+          aria-label={copy.stepC.mailboxBoxTitle}
           className="animate-scene-enter-delay-1 lg:col-span-5 xl:col-span-4 lg:sticky lg:top-8"
         >
           <div className="vintage-parchment p-5 sm:p-6">
@@ -1115,7 +1281,7 @@ export function StepCDesk({
                   </h2>
                   <p className="text-xs text-[#5A4636]">
                     {isAdmin
-                      ? `${copy.stepC.mailboxSubtitle} · กดดินสอเพื่อแก้ชื่อ/เนื้อหา`
+                      ? `${copy.stepC.mailboxSubtitle} · กดดินสอเพื่อแก้ได้ทุกฉบับ`
                       : copy.stepC.mailboxSubtitle}
                   </p>
                 </div>
@@ -1123,13 +1289,12 @@ export function StepCDesk({
 
               <div className="text-right shrink-0 tabular-nums">
                 <span className="font-display text-base sm:text-lg font-semibold text-[#2B1F16]">
-                  {totalLetterCount} ฉบับ
+                  {totalLetterCount} {copy.stepC.letterCountUnit}
                 </span>
               </div>
             </div>
 
             <div className="divide-y divide-[#5C442E]/20">
-              {/* รายการจดหมายของแอดมิน/ผู้สร้างทุกฉบับ */}
               {ownerLetters.map((doc) => {
                 const variant = doc.id === 'birthday' ? 'birthday' : 'gold';
                 return (
@@ -1158,10 +1323,10 @@ export function StepCDesk({
                         </p>
                         <p className="text-xs text-[#5A4636] mt-0.5 truncate">
                           <span>{doc.senderLabel}</span>
-                          <span aria-hidden="true"> · </span>
-                          <span>
-                            {doc.id === 'birthday' ? 'ข้างแก้วกาแฟ' : doc.dateLabel}
-                          </span>
+                          {doc.senderLabel && doc.dateLabel && (
+                            <span aria-hidden="true"> · </span>
+                          )}
+                          <span>{doc.dateLabel}</span>
                         </p>
                       </div>
                     </button>
@@ -1186,10 +1351,10 @@ export function StepCDesk({
                 );
               })}
 
-              {/* รายการจดหมายตอบกลับในกล่อง */}
               {userReplyLetters.map((reply) => {
                 const isSynced =
-                  reply.version > 0 && reply.lastSavedVersion >= reply.version;
+                  Boolean(reply.isPublicCloud) ||
+                  (reply.version > 0 && reply.lastSavedVersion >= reply.version);
                 return (
                   <div
                     key={reply.letterId}
@@ -1215,12 +1380,19 @@ export function StepCDesk({
                       />
                       <div className="flex-1 min-w-0">
                         <p className="font-display text-sm sm:text-base font-semibold text-[#2B1F16] truncate">
-                          {reply.title.trim() || 'จดหมายตอบกลับ (ยังไม่ระบุชื่อเรื่อง)'}
+                          {reply.title.trim() || copy.stepC.untitledReplyLabel}
                         </p>
                         <p className="text-xs text-[#5A4636] mt-0.5 truncate tabular-nums">
-                          <span>จาก: {reply.author.trim() || 'คุณ'}</span>
+                          <span>
+                            {copy.stepC.replySenderPrefix}{' '}
+                            {reply.author.trim() || 'คุณ'}
+                          </span>
                           <span aria-hidden="true"> · </span>
-                          <span>{isSynced ? 'บันทึกแล้ว' : 'ฉบับร่างในเครื่อง'}</span>
+                          <span>
+                            {isSynced
+                              ? copy.stepC.syncedBadgeLabel
+                              : copy.stepC.localDraftBadgeLabel}
+                          </span>
                           <span aria-hidden="true"> · </span>
                           <span>
                             {formatThaiTimestamp(
@@ -1236,7 +1408,7 @@ export function StepCDesk({
                         type="button"
                         onClick={() => startAdminEditReplyDoc(reply)}
                         title="แก้ไขและเปลี่ยนชื่อจดหมายตอบกลับฉบับนี้"
-                        aria-label={`แก้ไข ${reply.title || 'จดหมายตอบกลับ'}`}
+                        aria-label={`แก้ไข ${reply.title || copy.stepC.untitledReplyLabel}`}
                         className="min-h-[40px] min-w-[40px] inline-flex items-center justify-center rounded-lg text-[#3A281B] hover:bg-[#4A3525]/15 cursor-pointer shrink-0"
                       >
                         <Pencil className="w-4 h-4" aria-hidden="true" />
@@ -1271,7 +1443,6 @@ export function StepCDesk({
         </aside>
       </div>
 
-      {/* Modal ยืนยันคืนค่าข้อความต้นฉบับสำหรับแอดมิน */}
       {confirmResetModalOpen && (
         <div
           role="dialog"

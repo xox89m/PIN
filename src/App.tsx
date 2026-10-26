@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { APP_CONFIG } from './config';
 import { LetterDocument, SiteCopy } from './content/letters';
 import { SiteCopyContext } from './context/SiteCopyContext';
@@ -24,11 +24,16 @@ import {
   upsertLetterIntoLocalHistory,
 } from './services/letterStorage';
 import {
+  deleteSharedReplyFromFirestore,
   publishAdminStateToEveryone,
   PublishResult,
+  saveSharedReplyToFirestore,
   signInAdminWithGoogle,
+  signInVisitorWithGoogle,
+  signOutAdminGoogle,
   subscribeAdminAuth,
   subscribeToPublishedSiteState,
+  subscribeToSharedReplies,
 } from './services/cloudConfigSync';
 import { StepCoverLanding } from './components/StepCoverLanding';
 import { StepAIdentity } from './components/StepAIdentity';
@@ -53,7 +58,11 @@ export enum AppStep {
 export default function App() {
   const [currentStep, setCurrentStep] = useState<AppStep>(AppStep.STEP_COVER);
   const [isAdmin, setIsAdmin] = useState<boolean>(false);
+  const [adminLoginModalOpen, setAdminLoginModalOpen] = useState<boolean>(false);
   const [isCloudAdminVerified, setIsCloudAdminVerified] = useState<boolean>(false);
+  const [isVerifiedGoogleUser, setIsVerifiedGoogleUser] = useState<boolean>(false);
+  const [currentUserUid, setCurrentUserUid] = useState<string | null>(null);
+  const [currentUserEmail, setCurrentUserEmail] = useState<string | null>(null);
 
   // Sound Atmosphere & Playlist State
   const [soundMode, setSoundMode] = useState<SoundMode>(() =>
@@ -69,7 +78,7 @@ export default function App() {
     soundEngine.getIsUnlocked()
   );
 
-  // Owner Letters, Dynamic UI Copy & Reply Draft/History States
+  // Owner Letters, Dynamic UI Copy & Reply Draft/History/Shared States
   const [siteCopy, setSiteCopy] = useState<SiteCopy>(() =>
     loadSiteCopyFromLocal()
   );
@@ -80,6 +89,7 @@ export default function App() {
   const [sentLetters, setSentLetters] = useState<ReplyLetterDraft[]>(() =>
     loadLocalSentHistory()
   );
+  const [sharedReplies, setSharedReplies] = useState<ReplyLetterDraft[]>([]);
 
   const [saveStatus, setSaveStatus] = useState<SaveStatus>(() => {
     const initial = loadDraftFromLocal();
@@ -94,6 +104,7 @@ export default function App() {
   const draftRef = useRef<ReplyLetterDraft>(draft);
   const siteCopyRef = useRef<SiteCopy>(siteCopy);
   const ownerLettersRef = useRef<LetterDocument[]>(ownerLetters);
+  const isVerifiedGoogleRef = useRef<boolean>(false);
   const hasFirestoreDataRef = useRef<boolean>(false);
   const debounceTimerRef = useRef<number | null>(null);
   const retryTimerRef = useRef<number | null>(null);
@@ -113,7 +124,11 @@ export default function App() {
     ownerLettersRef.current = ownerLetters;
   }, [ownerLetters]);
 
-  // ซิงก์สถานะเพลงและเสียงกับ soundEngine (เช่น เมื่อเพลงจบแล้วเลื่อนไปเพลงถัดไปอัตโนมัติ)
+  useEffect(() => {
+    isVerifiedGoogleRef.current = isVerifiedGoogleUser;
+  }, [isVerifiedGoogleUser]);
+
+  // ซิงก์สถานะเพลงและเสียงกับ soundEngine
   useEffect(() => {
     return soundEngine.subscribe(() => {
       setSoundMode(soundEngine.getMode());
@@ -130,7 +145,7 @@ export default function App() {
     }
   }, [siteCopy.siteTitle]);
 
-  // ซิงก์ข้อมูลจาก Cloud Firestore แบบเรียลไทม์ให้ผู้เข้าชมทุกคนเห็นสิ่งเดียวกับที่แอดมินแก้ทันที
+  // ซิงก์ข้อมูลจาก Cloud Firestore แบบเรียลไทม์ให้ผู้เข้าชมทุกคนเห็นสิ่งเดียวกันทั้งหมด
   useEffect(() => {
     const unsubFirestore = subscribeToPublishedSiteState({
       onSiteCopyChange: (liveCopy) => {
@@ -143,30 +158,39 @@ export default function App() {
       },
     });
 
-    const unsubAuth = subscribeAdminAuth((snap) => {
-      setIsCloudAdminVerified(snap.isVerifiedOwner);
+    const unsubSharedReplies = subscribeToSharedReplies((liveReplies) => {
+      setSharedReplies(liveReplies);
     });
 
-    // Fallback สำรองจาก Apps Script เฉพาะกรณีที่แอดมินยังไม่เคยกดบันทึกขึ้น Firestore ครั้งแรก
-    void fetchOwnerConfigFromCloud().then(({ ownerLetters: cloudDocs, siteCopy: cloudCopy }) => {
-      if (hasFirestoreDataRef.current) return;
-      if (cloudDocs && cloudDocs.length > 0) {
-        saveOwnerLettersToLocal(cloudDocs);
-        setOwnerLetters(cloudDocs);
-      }
-      if (cloudCopy) {
-        saveSiteCopyToLocal(cloudCopy);
-        setSiteCopy(cloudCopy);
-      }
+    const unsubAuth = subscribeAdminAuth((snap) => {
+      setIsCloudAdminVerified(snap.isVerifiedOwner);
+      setIsVerifiedGoogleUser(snap.isVerifiedUser);
+      setCurrentUserUid(snap.user?.uid || null);
+      setCurrentUserEmail(snap.user?.email || null);
     });
+
+    void fetchOwnerConfigFromCloud().then(
+      ({ ownerLetters: cloudDocs, siteCopy: cloudCopy }) => {
+        if (hasFirestoreDataRef.current) return;
+        if (cloudDocs && cloudDocs.length > 0) {
+          saveOwnerLettersToLocal(cloudDocs);
+          setOwnerLetters(cloudDocs);
+        }
+        if (cloudCopy) {
+          saveSiteCopyToLocal(cloudCopy);
+          setSiteCopy(cloudCopy);
+        }
+      }
+    );
 
     return () => {
       unsubFirestore();
+      unsubSharedReplies();
       unsubAuth();
     };
   }, []);
 
-  // ปลดล็อกระบบเสียงด้วยเหตุการณ์ touchend / click ที่เข้ากันได้กับ iOS Safari และ Android โดยไม่ทำให้เครื่องค้าง
+  // ปลดล็อกระบบเสียงด้วยเหตุการณ์ touchend / click ที่เข้ากันได้กับมือถือทุกเครื่อง
   useEffect(() => {
     const unlockOnce = () => {
       window.removeEventListener('touchend', unlockOnce);
@@ -186,6 +210,34 @@ export default function App() {
       window.removeEventListener('keydown', unlockOnce);
     };
   }, []);
+
+  const allMergedReplyLetters = useMemo(() => {
+    const map = new Map<string, ReplyLetterDraft>();
+    for (const cloudItem of sharedReplies) {
+      map.set(cloudItem.letterId, { ...cloudItem, isPublicCloud: true });
+    }
+    const mergeCandidate = (item: ReplyLetterDraft) => {
+      const existing = map.get(item.letterId);
+      if (!existing) {
+        map.set(item.letterId, item);
+      } else if (item.version > existing.version) {
+        map.set(item.letterId, {
+          ...item,
+          authorUid: item.authorUid || existing.authorUid,
+          isPublicCloud: Boolean(item.isPublicCloud || existing.isPublicCloud),
+        });
+      }
+    };
+    for (const item of sentLetters) {
+      mergeCandidate(item);
+    }
+    if (draft.title.trim() || draft.body.trim()) {
+      mergeCandidate(draft);
+    }
+    return Array.from(map.values()).sort((a, b) =>
+      b.lastModifiedIso.localeCompare(a.lastModifiedIso)
+    );
+  }, [sharedReplies, sentLetters, draft]);
 
   const handleChangeSoundMode = (nextMode: SoundMode) => {
     soundEngine.setMode(nextMode);
@@ -216,7 +268,7 @@ export default function App() {
   }, [clearTimers]);
 
   /**
-   * ส่งข้อมูลจดหมายตอบกลับไปบันทึกยัง Google Apps Script Web App จริง
+   * บันทึกจดหมายตอบกลับไปยัง Google Apps Script และหากยืนยันบัญชีแล้วจะซิงก์ขึ้นกล่องกลาง Firestore อัตโนมัติ
    */
   const executeSave = useCallback(
     async (isFinalFold = false): Promise<boolean> => {
@@ -251,26 +303,51 @@ export default function App() {
       setStatusMessage('');
 
       try {
-        const result = await saveViaGasWebApp({
-          draft: snapshot,
-          isFinalFold,
-          signal: controller.signal,
-        });
+        const [gasResult, cloudShareRes] = await Promise.all([
+          saveViaGasWebApp({
+            draft: snapshot,
+            isFinalFold,
+            signal: controller.signal,
+          }).catch(() => ({
+            ok: false,
+            letterId: snapshot.letterId,
+            version: snapshot.version,
+            savedAt: '',
+            errorCode: 'NETWORK_ERR',
+            message: '',
+          })),
+          isVerifiedGoogleRef.current
+            ? saveSharedReplyToFirestore({
+                draft: {
+                  ...snapshot,
+                  version: Math.max(1, snapshot.version),
+                  recoveryState: isFinalFold ? 'completed' : 'synced',
+                },
+                promptSignInIfNeeded: false,
+              })
+            : Promise.resolve({ ok: false }),
+        ]);
 
         if (currentSeq !== requestSeqRef.current) {
           return false;
         }
 
-        if (result.ok) {
+        if (gasResult.ok || cloudShareRes.ok) {
           retryCountRef.current = 0;
+          const savedVer = gasResult.ok
+            ? gasResult.version
+            : Math.max(1, snapshot.version);
+          const savedIso =
+            (gasResult.ok && gasResult.savedAt) || new Date().toISOString();
 
           setDraft((prev) => {
             const updated: ReplyLetterDraft = {
               ...prev,
-              lastSavedVersion: Math.max(prev.lastSavedVersion, result.version),
-              lastSavedIso: result.savedAt,
+              lastSavedVersion: Math.max(prev.lastSavedVersion, savedVer),
+              lastSavedIso: savedIso,
+              isPublicCloud: Boolean(prev.isPublicCloud || cloudShareRes.ok),
               recoveryState:
-                isFinalFold && prev.version === result.version
+                isFinalFold && prev.version <= savedVer
                   ? 'completed'
                   : prev.recoveryState === 'completed'
                   ? 'completed'
@@ -281,7 +358,7 @@ export default function App() {
             return updated;
           });
 
-          if (draftRef.current.version <= result.version) {
+          if (draftRef.current.version <= savedVer) {
             setSaveStatus(SaveStatus.SAVED);
             setStatusMessage('');
             return true;
@@ -292,12 +369,12 @@ export default function App() {
         } else {
           setSaveStatus(SaveStatus.ERROR);
           setStatusMessage(
-            result.message || 'บันทึกไม่สำเร็จ กรุณาลองใหม่อีกครั้ง'
+            gasResult.message || 'บันทึกไม่สำเร็จ กรุณาลองใหม่อีกครั้ง'
           );
 
           const nonRetryableCodes = ['MISSING_GAS_URL', 'RATE_LIMITED'];
           if (
-            !nonRetryableCodes.includes(result.errorCode || '') &&
+            !nonRetryableCodes.includes(gasResult.errorCode || '') &&
             retryCountRef.current < APP_CONFIG.maxRetryAttempts
           ) {
             retryCountRef.current += 1;
@@ -335,20 +412,6 @@ export default function App() {
           setStatusMessage(
             'เกิดข้อผิดพลาดในการเชื่อมต่อระบบบันทึก ข้อมูลในเครื่องยังอยู่ครบถ้วน'
           );
-
-          if (retryCountRef.current < APP_CONFIG.maxRetryAttempts) {
-            retryCountRef.current += 1;
-            const backoffMs = Math.min(
-              16000,
-              1500 * Math.pow(2, retryCountRef.current)
-            );
-            if (retryTimerRef.current !== null) {
-              window.clearTimeout(retryTimerRef.current);
-            }
-            retryTimerRef.current = window.setTimeout(() => {
-              void executeSave(false);
-            }, backoffMs);
-          }
         }
         return false;
       }
@@ -356,7 +419,6 @@ export default function App() {
     []
   );
 
-  // เมื่ออินเทอร์เน็ตกลับมาออนไลน์ ให้ลองบันทึกฉบับร่างที่ค้างอยู่อัตโนมัติ
   useEffect(() => {
     const handleOnline = () => {
       const current = draftRef.current;
@@ -388,7 +450,7 @@ export default function App() {
     };
   }, [executeSave]);
 
-  // เชื่อมต่อบัญชี Google เจ้าของเว็บและซิงก์ค่าปัจจุบันขึ้นฐานข้อมูลกลางทันที
+  // เชื่อมต่อบัญชี Google เจ้าของเว็บและซิงก์ค่าปัจจุบันขึ้นฐานข้อมูลกลางทันที (ใช้เมื่อผ่านหน้าวันเกิดผู้ดูแลแล้ว)
   const handleConnectCloudAdmin = async (): Promise<PublishResult> => {
     const login = await signInAdminWithGoogle();
     if (!login.ok) {
@@ -400,7 +462,52 @@ export default function App() {
     });
   };
 
-  // ฟังก์ชันจัดการจดหมายสำหรับแอดมิน (28 สิงหาคม 2111) — เผยแพร่ให้ทุกคนเห็นเหมือนกันทันที
+  // เชื่อมต่อบัญชี Google สำหรับผู้เข้าชมเพื่อแชร์จดหมายตอบกลับขึ้นกล่องกลางให้ทุกคนอ่านได้
+  const handleConnectVisitorGoogle = async (): Promise<PublishResult> => {
+    const res = await signInVisitorWithGoogle();
+    if (!res.ok) {
+      return { ok: false, errorMessage: res.errorMessage };
+    }
+    const current = draftRef.current;
+    if (current.title.trim() || current.body.trim()) {
+      const pubRes = await saveSharedReplyToFirestore({
+        draft: { ...current, version: Math.max(1, current.version) },
+        promptSignInIfNeeded: false,
+      });
+      if (pubRes.ok) {
+        const updated: ReplyLetterDraft = { ...current, isPublicCloud: true };
+        draftRef.current = updated;
+        setDraft(updated);
+        saveDraftToLocal(updated);
+        setSentLetters(upsertLetterIntoLocalHistory(updated));
+      }
+    }
+    return { ok: true };
+  };
+
+  const handlePublishReplyToEveryone = async (
+    targetReply: ReplyLetterDraft
+  ): Promise<PublishResult> => {
+    const res = await saveSharedReplyToFirestore({
+      draft: {
+        ...targetReply,
+        version: Math.max(1, targetReply.version),
+      },
+      promptSignInIfNeeded: true,
+    });
+    if (res.ok) {
+      const updated: ReplyLetterDraft = { ...targetReply, isPublicCloud: true };
+      if (draftRef.current.letterId === updated.letterId) {
+        draftRef.current = updated;
+        setDraft(updated);
+        saveDraftToLocal(updated);
+      }
+      setSentLetters(upsertLetterIntoLocalHistory(updated));
+    }
+    return res;
+  };
+
+  // ฟังก์ชันจัดการจดหมายสำหรับแอดมิน — เผยแพร่ให้ทุกคนเห็นเหมือนกันทันที
   const handleSaveOwnerLetter = async (
     updatedDoc: LetterDocument
   ): Promise<PublishResult> => {
@@ -498,40 +605,35 @@ export default function App() {
 
   const handleAdminSaveReplyLetter = async (
     updatedReply: ReplyLetterDraft
-  ): Promise<boolean> => {
-    if (draftRef.current.letterId === updatedReply.letterId) {
-      draftRef.current = updatedReply;
-      setDraft(updatedReply);
-      saveDraftToLocal(updatedReply);
-    }
-    setSentLetters(upsertLetterIntoLocalHistory(updatedReply));
+  ): Promise<PublishResult> => {
+    const prepared: ReplyLetterDraft = {
+      ...updatedReply,
+      isPublicCloud: true,
+    };
 
-    try {
-      const res = await saveViaGasWebApp({
-        draft: updatedReply,
-        isFinalFold: updatedReply.recoveryState === 'completed',
-      });
-      if (res.ok) {
-        const syncedCopy: ReplyLetterDraft = {
-          ...updatedReply,
-          lastSavedVersion: Math.max(updatedReply.lastSavedVersion, res.version),
-          lastSavedIso: res.savedAt,
-        };
-        if (draftRef.current.letterId === syncedCopy.letterId) {
-          draftRef.current = syncedCopy;
-          setDraft(syncedCopy);
-          saveDraftToLocal(syncedCopy);
-        }
-        setSentLetters(upsertLetterIntoLocalHistory(syncedCopy));
-        return true;
-      }
-    } catch {
-      // Ignore network failure - local copy is already saved
+    if (draftRef.current.letterId === prepared.letterId) {
+      draftRef.current = prepared;
+      setDraft(prepared);
+      saveDraftToLocal(prepared);
     }
-    return false;
+    setSentLetters(upsertLetterIntoLocalHistory(prepared));
+
+    void saveViaGasWebApp({
+      draft: prepared,
+      isFinalFold: prepared.recoveryState === 'completed',
+    }).catch(() => null);
+
+    return saveSharedReplyToFirestore({
+      draft: prepared,
+      promptSignInIfNeeded: true,
+      requireAdmin: true,
+    });
   };
 
-  const handleAdminDeleteReplyLetter = (letterId: string) => {
+  const handleAdminDeleteReplyLetter = async (
+    letterId: string
+  ): Promise<PublishResult> => {
+    const wasInCloud = sharedReplies.some((r) => r.letterId === letterId);
     setSentLetters(removeLetterFromLocalHistory(letterId));
     if (draftRef.current.letterId === letterId) {
       const fresh = clearLocalDraft();
@@ -539,6 +641,11 @@ export default function App() {
       setDraft(fresh);
       setSaveStatus(SaveStatus.UNSAVED);
     }
+
+    if (wasInCloud) {
+      return deleteSharedReplyFromFirestore(letterId, true);
+    }
+    return { ok: true };
   };
 
   const handleUpdateDraftField = (
@@ -661,6 +768,20 @@ export default function App() {
       setDraft(completedDraft);
       saveDraftToLocal(completedDraft);
       setSentLetters(upsertLetterIntoLocalHistory(completedDraft));
+      if (isVerifiedGoogleRef.current) {
+        void saveSharedReplyToFirestore({
+          draft: completedDraft,
+          promptSignInIfNeeded: false,
+        }).then((res) => {
+          if (res.ok) {
+            const withCloud = { ...completedDraft, isPublicCloud: true };
+            draftRef.current = withCloud;
+            setDraft(withCloud);
+            saveDraftToLocal(withCloud);
+            setSentLetters(upsertLetterIntoLocalHistory(withCloud));
+          }
+        });
+      }
     } else {
       await executeSave(true);
     }
@@ -684,6 +805,11 @@ export default function App() {
     draft.lastSavedVersion >= draft.version &&
     saveStatus === SaveStatus.SAVED;
 
+  const isCurrentDraftInPublicCloud = Boolean(
+    draft.isPublicCloud ||
+      sharedReplies.some((r) => r.letterId === draft.letterId)
+  );
+
   const getLivingSceneId = (): LivingSceneId => {
     switch (currentStep) {
       case AppStep.STEP_B_BIRTHDAY:
@@ -702,7 +828,6 @@ export default function App() {
   return (
     <SiteCopyContext.Provider value={siteCopy}>
       <div className="relative isolate min-h-screen flex flex-col bg-[#0F0D0C] text-[#F4EBE1] overflow-x-hidden">
-        {/* พื้นหลังภาพวาดต้นฉบับโทนอบอุ่นใต้แสงเทียน (ไม่มีเอฟเฟกต์ฝน) */}
         <AmbientAtmosphere
           sceneId={getLivingSceneId()}
           customBgUrl={
@@ -710,17 +835,30 @@ export default function App() {
           }
         />
 
-        {/* แถบเครื่องมือแอดมินมุมซ้ายบน (มีปุ่มกลับหน้าแรก แก้ไขคำได้ทุกหน้า และซิงก์ให้ทุกคนเห็นตรงกัน) */}
+        {/* แถบจัดการและปุ่มล็อกอินผู้ดูแล (แสดงเฉพาะหลังจากยืนยันวันเกิดผู้ดูแลผ่านแล้วเท่านั้น) */}
         {isAdmin && (
           <AdminGlobalBar
             currentStep={currentStep as StepKey}
             siteCopy={siteCopy}
+            ownerLetters={ownerLetters}
+            allReplyLetters={allMergedReplyLetters}
+            adminEmail={currentUserEmail}
             isCloudAdminVerified={isCloudAdminVerified}
+            loginModalOpen={adminLoginModalOpen}
+            onSetLoginModalOpen={setAdminLoginModalOpen}
             onConnectCloudAdmin={handleConnectCloudAdmin}
+            onSignOutCloudAdmin={signOutAdminGoogle}
             onJumpToStep={(step) => setCurrentStep(step as AppStep)}
             onSaveSiteCopy={handleSaveSiteCopy}
             onResetSiteCopy={handleResetSiteCopy}
-            onExitAdminMode={() => setIsAdmin(false)}
+            onSaveOwnerLetter={handleSaveOwnerLetter}
+            onDeleteExtraOwnerLetter={handleDeleteExtraOwnerLetter}
+            onAdminSaveReplyLetter={handleAdminSaveReplyLetter}
+            onAdminDeleteReplyLetter={handleAdminDeleteReplyLetter}
+            onExitAdminMode={() => {
+              setAdminLoginModalOpen(false);
+              setIsAdmin(false);
+            }}
           />
         )}
 
@@ -739,7 +877,7 @@ export default function App() {
 
         <main
           className={`relative z-10 flex-1 flex flex-col justify-center ${
-            isAdmin ? 'pt-16' : 'pt-12 sm:pt-0'
+            isAdmin ? 'pt-16' : 'pt-14 sm:pt-0'
           }`}
         >
           {currentStep === AppStep.STEP_COVER && (
@@ -774,6 +912,7 @@ export default function App() {
               onVerified={() => {
                 soundEngine.playSoftTapSfx();
                 setIsAdmin(false);
+                setAdminLoginModalOpen(false);
                 setCurrentStep(AppStep.STEP_C_DESK);
               }}
               onAdminVerified={() => {
@@ -787,19 +926,27 @@ export default function App() {
           {currentStep === AppStep.STEP_C_DESK && (
             <StepCDesk
               isAdmin={isAdmin}
+              isCloudAdminVerified={isCloudAdminVerified}
+              currentUserUid={currentUserUid}
               ownerLetters={ownerLetters}
               currentDraft={draft}
               sentLetters={sentLetters}
+              sharedReplies={sharedReplies}
+              onOpenAdminLoginModal={() => setAdminLoginModalOpen(true)}
               onSaveOwnerLetter={handleSaveOwnerLetter}
               onDeleteExtraOwnerLetter={handleDeleteExtraOwnerLetter}
               onResetOwnerLetters={handleResetOwnerLetters}
               onAdminSaveReplyLetter={handleAdminSaveReplyLetter}
               onAdminDeleteReplyLetter={handleAdminDeleteReplyLetter}
+              onVisitorPublishReplyToEveryone={handlePublishReplyToEveryone}
               onReturnToCover={() => {
                 soundEngine.playSoftTapSfx();
                 setCurrentStep(AppStep.STEP_COVER);
               }}
-              onExitAdminMode={() => setIsAdmin(false)}
+              onExitAdminMode={() => {
+                setAdminLoginModalOpen(false);
+                setIsAdmin(false);
+              }}
               onContinueOrStartReply={handleContinueOrStartReply}
               onStartNewReply={handleStartNewReply}
               onEditSpecificReply={handleEditSpecificReply}
@@ -812,6 +959,8 @@ export default function App() {
               onUpdateDraftField={handleUpdateDraftField}
               saveStatus={saveStatus}
               statusMessage={statusMessage}
+              isVerifiedGoogleUser={isVerifiedGoogleUser}
+              onConnectVisitorGoogle={handleConnectVisitorGoogle}
               onManualRetrySave={() => {
                 retryCountRef.current = 0;
                 void executeSave(false);
@@ -830,6 +979,10 @@ export default function App() {
               saveStatus={saveStatus}
               statusMessage={statusMessage}
               isCurrentVersionConfirmedSaved={isCurrentVersionConfirmedSaved}
+              isReplySharedPublicly={isCurrentDraftInPublicCloud}
+              onPublishReplyToEveryone={() =>
+                handlePublishReplyToEveryone(draft)
+              }
               onRetryFinalSave={() => {
                 retryCountRef.current = 0;
                 void executeSave(true);

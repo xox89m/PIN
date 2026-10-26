@@ -7,6 +7,7 @@
       "properties": {
         "uid": {
           "type": "string",
+          "minLength": 1,
           "maxLength": 128,
           "pattern": "^[a-zA-Z0-9_.:-]+$",
           "description": "Firebase Auth UID of the administrator."
@@ -21,7 +22,7 @@
     },
     "PublishedSiteConfig": {
       "title": "PublishedSiteConfig",
-      "description": "Live website copy across all 6 steps and ordered list of published owner letter IDs visible to all visitors.",
+      "description": "Live website copy across all steps, top bars, modals, and ordered list of published owner letter IDs visible to all visitors.",
       "type": "object",
       "properties": {
         "configId": {
@@ -48,6 +49,10 @@
           "maxLength": 200,
           "description": "Main website title."
         },
+        "globalBars": {
+          "type": "object",
+          "description": "Top bar control labels including admin login button and sound status labels."
+        },
         "cover": {
           "type": "object",
           "description": "Cover step UI copy fields."
@@ -62,15 +67,15 @@
         },
         "stepC": {
           "type": "object",
-          "description": "Step C letter desk UI copy fields."
+          "description": "Step C letter desk and mailbox UI copy fields."
         },
         "stepD": {
           "type": "object",
-          "description": "Step D reply editor UI copy fields."
+          "description": "Step D reply editor and modal UI copy fields."
         },
         "stepE": {
           "type": "object",
-          "description": "Step E envelope folding UI copy fields."
+          "description": "Step E envelope folding and thank-you UI copy fields."
         },
         "createdAt": {
           "type": "string",
@@ -88,6 +93,7 @@
         "authorUid",
         "letterOrderIds",
         "siteTitle",
+        "globalBars",
         "cover",
         "stepA",
         "stepB",
@@ -181,6 +187,91 @@
         "createdAt",
         "updatedAt"
       ]
+    },
+    "SharedReplyLetter": {
+      "title": "SharedReplyLetter",
+      "description": "Public reply letter placed in the shared mailbox so all visitors can read it and the admin or original writer can edit or remove it.",
+      "type": "object",
+      "properties": {
+        "letterId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[a-zA-Z0-9_-]+$",
+          "description": "Unique reply letter identifier matching the document ID."
+        },
+        "authorUid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_.:-]+$",
+          "description": "Immutable Firebase Auth UID of the user who originally created this reply letter."
+        },
+        "lastEditorUid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_.:-]+$",
+          "description": "Firebase Auth UID of the user (original writer or verified admin) who performed the latest save."
+        },
+        "visibility": {
+          "type": "string",
+          "enum": ["public"],
+          "maxLength": 16,
+          "description": "Explicit public visibility marker enforced on list and get queries."
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200,
+          "description": "Display title of the reply letter."
+        },
+        "author": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120,
+          "description": "Display pen-name of the letter writer (no PII)."
+        },
+        "body": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 8000,
+          "description": "Body content of the reply letter."
+        },
+        "version": {
+          "type": "integer",
+          "description": "Monotonic document revision number (1 to 100000)."
+        },
+        "recoveryState": {
+          "type": "string",
+          "enum": ["synced", "completed"],
+          "maxLength": 20,
+          "description": "Envelope state of the reply letter."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Immutable server creation timestamp."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server last-modified timestamp."
+        }
+      },
+      "required": [
+        "letterId",
+        "authorUid",
+        "lastEditorUid",
+        "visibility",
+        "title",
+        "author",
+        "body",
+        "version",
+        "recoveryState",
+        "createdAt",
+        "updatedAt"
+      ]
     }
   },
   "firestore": {
@@ -190,11 +281,15 @@
     },
     "/published_site/{configId}": {
       "schema": "PublishedSiteConfig",
-      "description": "Singleton live_site document containing UI copy for all steps and ordered owner letter IDs."
+      "description": "Singleton live_site document containing complete UI copy for every screen and ordered owner letter IDs."
     },
     "/published_letters/{letterId}": {
       "schema": "PublishedLetter",
-      "description": "Published owner letters (apology, birthday, and admin-created letters) visible to all visitors."
+      "description": "Published owner letters (apology, birthday, and admin-created letters) readable by all visitors."
+    },
+    "/shared_replies/{replyId}": {
+      "schema": "SharedReplyLetter",
+      "description": "Shared public reply letters readable by all visitors, writable by verified creator or admin."
     }
   }
 }

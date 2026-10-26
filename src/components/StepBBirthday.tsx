@@ -112,7 +112,6 @@ export function StepBBirthday({
           </h1>
         </div>
 
-        {/* แถวตัวเลือก วัน / เดือน / ปี ทรงแคปซูลโปร่งแสงตามภาพอ้างอิง */}
         <div className="animate-scene-enter-delay-1 grid grid-cols-3 gap-2.5 sm:gap-4 w-full max-w-md">
           <div>
             <label htmlFor="bday-day" className="sr-only">
@@ -178,7 +177,7 @@ export function StepBBirthday({
         </div>
 
         <p className="animate-scene-enter-delay-1 text-xs text-[#E8DDD0]/70">
-          รองรับการเลือกปี ค.ศ. {TARGET_BIRTHDAY.minYear} – {TARGET_BIRTHDAY.maxYear}
+          {copy.stepB.yearRangeHint}
         </p>
 
         {errorMessage && (
@@ -190,7 +189,7 @@ export function StepBBirthday({
           </div>
         )}
 
-        <div className="animate-scene-enter-delay-2 pt-2">
+        <div className="animate-scene-enter-delay-2 pt-2 flex flex-col items-center">
           <button
             type="submit"
             className="night-glass-btn-active min-w-[156px] min-h-[48px] px-9 py-2.5 text-base font-medium whitespace-nowrap shrink-0 cursor-pointer"

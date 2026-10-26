@@ -44,13 +44,28 @@ service cloud.firestore {
       );
     }
 
+    function isValidGlobalBarsMap(m) {
+      return m is map &&
+        m.keys().hasAll([
+          'adminLoginBtn', 'soundMutedBtn', 'soundTapToPlayBtn', 'soundPlayingSfxOnlyBtn'
+        ]) &&
+        m.keys().hasOnly([
+          'adminLoginBtn', 'soundMutedBtn', 'soundTapToPlayBtn', 'soundPlayingSfxOnlyBtn'
+        ]) &&
+        isBoundedString(m.adminLoginBtn, 0, 200) &&
+        isBoundedString(m.soundMutedBtn, 0, 200) &&
+        isBoundedString(m.soundTapToPlayBtn, 0, 200) &&
+        isBoundedString(m.soundPlayingSfxOnlyBtn, 0, 200);
+    }
+
     function isValidCoverMap(m) {
       return m is map &&
-        m.keys().hasAll(['subtitleLine1', 'subtitleLine2', 'startBtn']) &&
-        m.keys().hasOnly(['subtitleLine1', 'subtitleLine2', 'startBtn']) &&
+        m.keys().hasAll(['subtitleLine1', 'subtitleLine2', 'startBtn', 'readAllLettersBtn']) &&
+        m.keys().hasOnly(['subtitleLine1', 'subtitleLine2', 'startBtn', 'readAllLettersBtn']) &&
         isBoundedString(m.subtitleLine1, 0, 500) &&
         isBoundedString(m.subtitleLine2, 0, 500) &&
-        isBoundedString(m.startBtn, 1, 200);
+        isBoundedString(m.startBtn, 1, 200) &&
+        isBoundedString(m.readAllLettersBtn, 0, 200);
     }
 
     function isValidStepAMap(m) {
@@ -58,12 +73,12 @@ service cloud.firestore {
         m.keys().hasAll([
           'homeBtn', 'backBtn', 'initialQuestion', 'yesBtn', 'noBtn',
           'waitMessage', 'waitSubLabel', 'waitFollowUp',
-          'actuallyMeBtn', 'reallyNotMeBtn', 'politeExitTitle', 'politeExitBody'
+          'actuallyMeBtn', 'reallyNotMeBtn', 'politeExitTitle', 'politeExitBody', 'politeExitReadBtn'
         ]) &&
         m.keys().hasOnly([
           'homeBtn', 'backBtn', 'initialQuestion', 'yesBtn', 'noBtn',
           'waitMessage', 'waitSubLabel', 'waitFollowUp',
-          'actuallyMeBtn', 'reallyNotMeBtn', 'politeExitTitle', 'politeExitBody'
+          'actuallyMeBtn', 'reallyNotMeBtn', 'politeExitTitle', 'politeExitBody', 'politeExitReadBtn'
         ]) &&
         isBoundedString(m.homeBtn, 0, 200) &&
         isBoundedString(m.backBtn, 0, 200) &&
@@ -76,16 +91,23 @@ service cloud.firestore {
         isBoundedString(m.actuallyMeBtn, 0, 300) &&
         isBoundedString(m.reallyNotMeBtn, 0, 300) &&
         isBoundedString(m.politeExitTitle, 0, 500) &&
-        isBoundedString(m.politeExitBody, 0, 1000);
+        isBoundedString(m.politeExitBody, 0, 1000) &&
+        isBoundedString(m.politeExitReadBtn, 0, 200);
     }
 
     function isValidStepBMap(m) {
       return m is map &&
-        m.keys().hasAll(['backBtn', 'question', 'submitBtn', 'wrongDateMessage']) &&
-        m.keys().hasOnly(['backBtn', 'question', 'submitBtn', 'wrongDateMessage']) &&
+        m.keys().hasAll([
+          'backBtn', 'question', 'yearRangeHint', 'submitBtn', 'skipToReadBtn', 'wrongDateMessage'
+        ]) &&
+        m.keys().hasOnly([
+          'backBtn', 'question', 'yearRangeHint', 'submitBtn', 'skipToReadBtn', 'wrongDateMessage'
+        ]) &&
         isBoundedString(m.backBtn, 0, 200) &&
         isBoundedString(m.question, 0, 400) &&
+        isBoundedString(m.yearRangeHint, 0, 300) &&
         isBoundedString(m.submitBtn, 0, 200) &&
+        isBoundedString(m.skipToReadBtn, 0, 200) &&
         isBoundedString(m.wrongDateMessage, 0, 600);
     }
 
@@ -93,24 +115,43 @@ service cloud.firestore {
       return m is map &&
         m.keys().hasAll([
           'mailboxHeading', 'deskHintClosed', 'birthdayEnvelopeTag', 'apologyEnvelopeTag',
-          'mailboxBoxTitle', 'mailboxSubtitle', 'foldBackBtn',
-          'writeReplyBtn', 'writeNewReplyBtn', 'writeShortBtn', 'privacyFooterNote'
+          'extraEnvelopeTag', 'skipOpenAnimBtn', 'continueDraftBtn',
+          'mailboxBoxTitle', 'mailboxSubtitle', 'letterCountUnit', 'foldBackBtn',
+          'writeReplyBtn', 'writeNewReplyBtn', 'writeShortBtn',
+          'replySenderPrefix', 'untitledReplyLabel', 'emptyReplyBodyLabel',
+          'referenceIdLabel', 'editReplyBtn', 'syncedBadgeLabel', 'localDraftBadgeLabel',
+          'privacyFooterNote'
         ]) &&
         m.keys().hasOnly([
           'mailboxHeading', 'deskHintClosed', 'birthdayEnvelopeTag', 'apologyEnvelopeTag',
-          'mailboxBoxTitle', 'mailboxSubtitle', 'foldBackBtn',
-          'writeReplyBtn', 'writeNewReplyBtn', 'writeShortBtn', 'privacyFooterNote'
+          'extraEnvelopeTag', 'skipOpenAnimBtn', 'continueDraftBtn',
+          'mailboxBoxTitle', 'mailboxSubtitle', 'letterCountUnit', 'foldBackBtn',
+          'writeReplyBtn', 'writeNewReplyBtn', 'writeShortBtn',
+          'replySenderPrefix', 'untitledReplyLabel', 'emptyReplyBodyLabel',
+          'referenceIdLabel', 'editReplyBtn', 'syncedBadgeLabel', 'localDraftBadgeLabel',
+          'privacyFooterNote'
         ]) &&
         isBoundedString(m.mailboxHeading, 0, 300) &&
         isBoundedString(m.deskHintClosed, 0, 500) &&
         isBoundedString(m.birthdayEnvelopeTag, 0, 300) &&
         isBoundedString(m.apologyEnvelopeTag, 0, 300) &&
+        isBoundedString(m.extraEnvelopeTag, 0, 300) &&
+        isBoundedString(m.skipOpenAnimBtn, 0, 200) &&
+        isBoundedString(m.continueDraftBtn, 0, 200) &&
         isBoundedString(m.mailboxBoxTitle, 0, 300) &&
         isBoundedString(m.mailboxSubtitle, 0, 400) &&
+        isBoundedString(m.letterCountUnit, 0, 100) &&
         isBoundedString(m.foldBackBtn, 0, 200) &&
         isBoundedString(m.writeReplyBtn, 0, 200) &&
         isBoundedString(m.writeNewReplyBtn, 0, 200) &&
         isBoundedString(m.writeShortBtn, 0, 200) &&
+        isBoundedString(m.replySenderPrefix, 0, 100) &&
+        isBoundedString(m.untitledReplyLabel, 0, 200) &&
+        isBoundedString(m.emptyReplyBodyLabel, 0, 300) &&
+        isBoundedString(m.referenceIdLabel, 0, 200) &&
+        isBoundedString(m.editReplyBtn, 0, 200) &&
+        isBoundedString(m.syncedBadgeLabel, 0, 200) &&
+        isBoundedString(m.localDraftBadgeLabel, 0, 200) &&
         isBoundedString(m.privacyFooterNote, 0, 600);
     }
 
@@ -119,12 +160,20 @@ service cloud.firestore {
         m.keys().hasAll([
           'backBtn', 'heading', 'privacyNoticeBody', 'deletionPolicyNote',
           'titleLabel', 'titlePlaceholder', 'authorLabel', 'authorPlaceholder',
-          'bodyLabel', 'bodyPlaceholder', 'clearDraftBtn', 'finishAndFoldBtn'
+          'bodyLabel', 'bodyPlaceholder',
+          'savingStatusText', 'savedStatusText', 'offlineStatusText', 'errorStatusText',
+          'autosaveHintText', 'retryInlineBtn',
+          'clearDraftBtn', 'clearModalTitle', 'clearModalBody',
+          'clearModalCancelBtn', 'clearModalConfirmBtn', 'finishAndFoldBtn'
         ]) &&
         m.keys().hasOnly([
           'backBtn', 'heading', 'privacyNoticeBody', 'deletionPolicyNote',
           'titleLabel', 'titlePlaceholder', 'authorLabel', 'authorPlaceholder',
-          'bodyLabel', 'bodyPlaceholder', 'clearDraftBtn', 'finishAndFoldBtn'
+          'bodyLabel', 'bodyPlaceholder',
+          'savingStatusText', 'savedStatusText', 'offlineStatusText', 'errorStatusText',
+          'autosaveHintText', 'retryInlineBtn',
+          'clearDraftBtn', 'clearModalTitle', 'clearModalBody',
+          'clearModalCancelBtn', 'clearModalConfirmBtn', 'finishAndFoldBtn'
         ]) &&
         isBoundedString(m.backBtn, 0, 200) &&
         isBoundedString(m.heading, 0, 300) &&
@@ -136,45 +185,62 @@ service cloud.firestore {
         isBoundedString(m.authorPlaceholder, 0, 300) &&
         isBoundedString(m.bodyLabel, 0, 200) &&
         isBoundedString(m.bodyPlaceholder, 0, 400) &&
+        isBoundedString(m.savingStatusText, 0, 200) &&
+        isBoundedString(m.savedStatusText, 0, 200) &&
+        isBoundedString(m.offlineStatusText, 0, 300) &&
+        isBoundedString(m.errorStatusText, 0, 300) &&
+        isBoundedString(m.autosaveHintText, 0, 300) &&
+        isBoundedString(m.retryInlineBtn, 0, 200) &&
         isBoundedString(m.clearDraftBtn, 0, 200) &&
+        isBoundedString(m.clearModalTitle, 0, 400) &&
+        isBoundedString(m.clearModalBody, 0, 1000) &&
+        isBoundedString(m.clearModalCancelBtn, 0, 200) &&
+        isBoundedString(m.clearModalConfirmBtn, 0, 200) &&
         isBoundedString(m.finishAndFoldBtn, 0, 200);
     }
 
     function isValidStepEMap(m) {
       return m is map &&
         m.keys().hasAll([
+          'savingOverlayTitle', 'savingOverlayBody',
           'savedHeading', 'savedSubheading', 'skipAnimationBtn',
-          'thankYouTitle', 'thankYouSubtitle', 'backToDeskBtn',
-          'writeAnotherBtn', 'editAgainBtn',
-          'unsavedWarningTitle', 'unsavedWarningBody', 'retrySaveBtn'
+          'thankYouTitle', 'thankYouSubtitle', 'heartSymbol', 'referenceCodeLabel',
+          'backToDeskBtn', 'writeAnotherBtn', 'editAgainBtn',
+          'unsavedWarningTitle', 'unsavedWarningBody', 'retrySaveBtn', 'backToWriteBtn'
         ]) &&
         m.keys().hasOnly([
+          'savingOverlayTitle', 'savingOverlayBody',
           'savedHeading', 'savedSubheading', 'skipAnimationBtn',
-          'thankYouTitle', 'thankYouSubtitle', 'backToDeskBtn',
-          'writeAnotherBtn', 'editAgainBtn',
-          'unsavedWarningTitle', 'unsavedWarningBody', 'retrySaveBtn'
+          'thankYouTitle', 'thankYouSubtitle', 'heartSymbol', 'referenceCodeLabel',
+          'backToDeskBtn', 'writeAnotherBtn', 'editAgainBtn',
+          'unsavedWarningTitle', 'unsavedWarningBody', 'retrySaveBtn', 'backToWriteBtn'
         ]) &&
+        isBoundedString(m.savingOverlayTitle, 0, 400) &&
+        isBoundedString(m.savingOverlayBody, 0, 1000) &&
         isBoundedString(m.savedHeading, 0, 300) &&
         isBoundedString(m.savedSubheading, 0, 500) &&
         isBoundedString(m.skipAnimationBtn, 0, 200) &&
         isBoundedString(m.thankYouTitle, 0, 400) &&
         isBoundedString(m.thankYouSubtitle, 0, 500) &&
+        isBoundedString(m.heartSymbol, 0, 40) &&
+        isBoundedString(m.referenceCodeLabel, 0, 200) &&
         isBoundedString(m.backToDeskBtn, 0, 200) &&
         isBoundedString(m.writeAnotherBtn, 0, 200) &&
         isBoundedString(m.editAgainBtn, 0, 200) &&
         isBoundedString(m.unsavedWarningTitle, 0, 400) &&
         isBoundedString(m.unsavedWarningBody, 0, 1000) &&
-        isBoundedString(m.retrySaveBtn, 0, 200);
+        isBoundedString(m.retrySaveBtn, 0, 200) &&
+        isBoundedString(m.backToWriteBtn, 0, 200);
     }
 
     function isValidPublishedSiteConfig(data) {
       return data.keys().hasAll([
-          'configId', 'authorUid', 'letterOrderIds', 'siteTitle',
+          'configId', 'authorUid', 'letterOrderIds', 'siteTitle', 'globalBars',
           'cover', 'stepA', 'stepB', 'stepC', 'stepD', 'stepE',
           'createdAt', 'updatedAt'
         ]) &&
         data.keys().hasOnly([
-          'configId', 'authorUid', 'letterOrderIds', 'siteTitle',
+          'configId', 'authorUid', 'letterOrderIds', 'siteTitle', 'globalBars',
           'cover', 'stepA', 'stepB', 'stepC', 'stepD', 'stepE',
           'createdAt', 'updatedAt'
         ]) &&
@@ -189,6 +255,7 @@ service cloud.firestore {
         data.letterOrderIds.size() <= 30 &&
         isValidId(data.letterOrderIds[0]) &&
         isBoundedString(data.siteTitle, 1, 200) &&
+        isValidGlobalBarsMap(data.globalBars) &&
         isValidCoverMap(data.cover) &&
         isValidStepAMap(data.stepA) &&
         isValidStepBMap(data.stepB) &&
@@ -228,6 +295,37 @@ service cloud.firestore {
         data.updatedAt is timestamp;
     }
 
+    function isValidSharedReplyLetter(data) {
+      return data.keys().hasAll([
+          'letterId', 'authorUid', 'lastEditorUid', 'visibility',
+          'title', 'author', 'body', 'version', 'recoveryState',
+          'createdAt', 'updatedAt'
+        ]) &&
+        data.keys().hasOnly([
+          'letterId', 'authorUid', 'lastEditorUid', 'visibility',
+          'title', 'author', 'body', 'version', 'recoveryState',
+          'createdAt', 'updatedAt'
+        ]) &&
+        isValidId(data.letterId) &&
+        isValidUid(data.authorUid) &&
+        isValidUid(data.lastEditorUid) &&
+        data.lastEditorUid == request.auth.uid &&
+        data.visibility is string &&
+        data.visibility.size() <= 16 &&
+        data.visibility == 'public' &&
+        isBoundedString(data.title, 1, 200) &&
+        isBoundedString(data.author, 1, 120) &&
+        isBoundedString(data.body, 1, 8000) &&
+        data.version is int &&
+        data.version >= 1 &&
+        data.version <= 100000 &&
+        data.recoveryState is string &&
+        data.recoveryState.size() <= 20 &&
+        (data.recoveryState == 'synced' || data.recoveryState == 'completed') &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
     // Trusted Admin Role Registry (Client writes forbidden)
     match /admins/{adminUid} {
       allow get: if isVerifiedUser() && isValidUid(adminUid) && (request.auth.uid == adminUid || isAdmin());
@@ -256,7 +354,7 @@ service cloud.firestore {
         incoming().createdAt == existing().createdAt &&
         incoming().updatedAt == request.time &&
         incoming().diff(existing()).affectedKeys().hasOnly([
-          'authorUid', 'letterOrderIds', 'siteTitle',
+          'authorUid', 'letterOrderIds', 'siteTitle', 'globalBars',
           'cover', 'stepA', 'stepB', 'stepC', 'stepD', 'stepE', 'updatedAt'
         ]) &&
         isAdmin();
@@ -295,6 +393,37 @@ service cloud.firestore {
         letterId != 'apology' &&
         letterId != 'birthday' &&
         isAdmin();
+    }
+
+    // Shared Public Reply Letters (Readable by all visitors via visibility == 'public', editable by creator or Admin)
+    match /shared_replies/{replyId} {
+      allow get: if isValidId(replyId) && (resource == null || existing().visibility == 'public');
+      allow list: if existing().visibility == 'public';
+
+      allow create: if isVerifiedUser() &&
+        isValidId(replyId) &&
+        incoming().letterId == replyId &&
+        incoming().authorUid == request.auth.uid &&
+        isValidSharedReplyLetter(incoming()) &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time;
+
+      allow update: if isVerifiedUser() &&
+        isValidSharedReplyLetter(incoming()) &&
+        isValidId(replyId) &&
+        incoming().letterId == existing().letterId &&
+        incoming().authorUid == existing().authorUid &&
+        incoming().visibility == existing().visibility &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time &&
+        incoming().diff(existing()).affectedKeys().hasOnly([
+          'lastEditorUid', 'title', 'author', 'body', 'version', 'recoveryState', 'updatedAt'
+        ]) &&
+        (request.auth.uid == existing().authorUid || isAdmin());
+
+      allow delete: if isVerifiedUser() &&
+        isValidId(replyId) &&
+        (request.auth.uid == existing().authorUid || isAdmin());
     }
   }
 }

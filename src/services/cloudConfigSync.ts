@@ -1,10 +1,17 @@
 import { onAuthStateChanged, signInWithPopup, signOut, User } from 'firebase/auth';
 import {
+  collection,
+  deleteDoc,
   doc,
   getDoc,
   onSnapshot,
+  query,
   serverTimestamp,
+  setDoc,
+  Timestamp,
   Unsubscribe,
+  updateDoc,
+  where,
   writeBatch,
 } from 'firebase/firestore';
 import {
@@ -26,6 +33,7 @@ import {
 } from '../firebase';
 import {
   mergeWithDefaultSiteCopy,
+  ReplyLetterDraft,
   saveOwnerLettersToLocal,
   saveSiteCopyToLocal,
 } from './letterStorage';
@@ -51,12 +59,30 @@ function sanitizeId(rawId: string, fallback = 'note_extra'): string {
  * Sanitize SiteCopy strictly to match firebase-blueprint.json & firestore.rules bounds.
  */
 export function sanitizeSiteCopyForFirestore(copy: SiteCopy): SiteCopy {
+  const g = copy.globalBars || UI_COPY.globalBars;
   return {
     siteTitle: clampStr(copy.siteTitle, UI_COPY.siteTitle, 1, 200),
+    globalBars: {
+      adminLoginBtn: clampStr(g.adminLoginBtn, UI_COPY.globalBars.adminLoginBtn, 0, 200),
+      soundMutedBtn: clampStr(g.soundMutedBtn, UI_COPY.globalBars.soundMutedBtn, 0, 200),
+      soundTapToPlayBtn: clampStr(
+        g.soundTapToPlayBtn,
+        UI_COPY.globalBars.soundTapToPlayBtn,
+        0,
+        200
+      ),
+      soundPlayingSfxOnlyBtn: clampStr(
+        g.soundPlayingSfxOnlyBtn,
+        UI_COPY.globalBars.soundPlayingSfxOnlyBtn,
+        0,
+        200
+      ),
+    },
     cover: {
       subtitleLine1: clampStr(copy.cover.subtitleLine1, '', 0, 500),
       subtitleLine2: clampStr(copy.cover.subtitleLine2, '', 0, 500),
       startBtn: clampStr(copy.cover.startBtn, UI_COPY.cover.startBtn, 1, 200),
+      readAllLettersBtn: clampStr(copy.cover.readAllLettersBtn, '', 0, 200),
     },
     stepA: {
       homeBtn: clampStr(copy.stepA.homeBtn, '', 0, 200),
@@ -71,11 +97,14 @@ export function sanitizeSiteCopyForFirestore(copy: SiteCopy): SiteCopy {
       reallyNotMeBtn: clampStr(copy.stepA.reallyNotMeBtn, '', 0, 300),
       politeExitTitle: clampStr(copy.stepA.politeExitTitle, '', 0, 500),
       politeExitBody: clampStr(copy.stepA.politeExitBody, '', 0, 1000),
+      politeExitReadBtn: clampStr(copy.stepA.politeExitReadBtn, '', 0, 200),
     },
     stepB: {
       backBtn: clampStr(copy.stepB.backBtn, '', 0, 200),
       question: clampStr(copy.stepB.question, '', 0, 400),
+      yearRangeHint: clampStr(copy.stepB.yearRangeHint, '', 0, 300),
       submitBtn: clampStr(copy.stepB.submitBtn, '', 0, 200),
+      skipToReadBtn: clampStr(copy.stepB.skipToReadBtn, '', 0, 200),
       wrongDateMessage: clampStr(copy.stepB.wrongDateMessage, '', 0, 600),
     },
     stepC: {
@@ -83,12 +112,23 @@ export function sanitizeSiteCopyForFirestore(copy: SiteCopy): SiteCopy {
       deskHintClosed: clampStr(copy.stepC.deskHintClosed, '', 0, 500),
       birthdayEnvelopeTag: clampStr(copy.stepC.birthdayEnvelopeTag, '', 0, 300),
       apologyEnvelopeTag: clampStr(copy.stepC.apologyEnvelopeTag, '', 0, 300),
+      extraEnvelopeTag: clampStr(copy.stepC.extraEnvelopeTag, '', 0, 300),
+      skipOpenAnimBtn: clampStr(copy.stepC.skipOpenAnimBtn, '', 0, 200),
+      continueDraftBtn: clampStr(copy.stepC.continueDraftBtn, '', 0, 200),
       mailboxBoxTitle: clampStr(copy.stepC.mailboxBoxTitle, '', 0, 300),
       mailboxSubtitle: clampStr(copy.stepC.mailboxSubtitle, '', 0, 400),
+      letterCountUnit: clampStr(copy.stepC.letterCountUnit, '', 0, 100),
       foldBackBtn: clampStr(copy.stepC.foldBackBtn, '', 0, 200),
       writeReplyBtn: clampStr(copy.stepC.writeReplyBtn, '', 0, 200),
       writeNewReplyBtn: clampStr(copy.stepC.writeNewReplyBtn, '', 0, 200),
       writeShortBtn: clampStr(copy.stepC.writeShortBtn, '', 0, 200),
+      replySenderPrefix: clampStr(copy.stepC.replySenderPrefix, '', 0, 100),
+      untitledReplyLabel: clampStr(copy.stepC.untitledReplyLabel, '', 0, 200),
+      emptyReplyBodyLabel: clampStr(copy.stepC.emptyReplyBodyLabel, '', 0, 300),
+      referenceIdLabel: clampStr(copy.stepC.referenceIdLabel, '', 0, 200),
+      editReplyBtn: clampStr(copy.stepC.editReplyBtn, '', 0, 200),
+      syncedBadgeLabel: clampStr(copy.stepC.syncedBadgeLabel, '', 0, 200),
+      localDraftBadgeLabel: clampStr(copy.stepC.localDraftBadgeLabel, '', 0, 200),
       privacyFooterNote: clampStr(copy.stepC.privacyFooterNote, '', 0, 600),
     },
     stepD: {
@@ -102,21 +142,36 @@ export function sanitizeSiteCopyForFirestore(copy: SiteCopy): SiteCopy {
       authorPlaceholder: clampStr(copy.stepD.authorPlaceholder, '', 0, 300),
       bodyLabel: clampStr(copy.stepD.bodyLabel, '', 0, 200),
       bodyPlaceholder: clampStr(copy.stepD.bodyPlaceholder, '', 0, 400),
+      savingStatusText: clampStr(copy.stepD.savingStatusText, '', 0, 200),
+      savedStatusText: clampStr(copy.stepD.savedStatusText, '', 0, 200),
+      offlineStatusText: clampStr(copy.stepD.offlineStatusText, '', 0, 300),
+      errorStatusText: clampStr(copy.stepD.errorStatusText, '', 0, 300),
+      autosaveHintText: clampStr(copy.stepD.autosaveHintText, '', 0, 300),
+      retryInlineBtn: clampStr(copy.stepD.retryInlineBtn, '', 0, 200),
       clearDraftBtn: clampStr(copy.stepD.clearDraftBtn, '', 0, 200),
+      clearModalTitle: clampStr(copy.stepD.clearModalTitle, '', 0, 400),
+      clearModalBody: clampStr(copy.stepD.clearModalBody, '', 0, 1000),
+      clearModalCancelBtn: clampStr(copy.stepD.clearModalCancelBtn, '', 0, 200),
+      clearModalConfirmBtn: clampStr(copy.stepD.clearModalConfirmBtn, '', 0, 200),
       finishAndFoldBtn: clampStr(copy.stepD.finishAndFoldBtn, '', 0, 200),
     },
     stepE: {
+      savingOverlayTitle: clampStr(copy.stepE.savingOverlayTitle, '', 0, 400),
+      savingOverlayBody: clampStr(copy.stepE.savingOverlayBody, '', 0, 1000),
       savedHeading: clampStr(copy.stepE.savedHeading, '', 0, 300),
       savedSubheading: clampStr(copy.stepE.savedSubheading, '', 0, 500),
       skipAnimationBtn: clampStr(copy.stepE.skipAnimationBtn, '', 0, 200),
       thankYouTitle: clampStr(copy.stepE.thankYouTitle, '', 0, 400),
       thankYouSubtitle: clampStr(copy.stepE.thankYouSubtitle, '', 0, 500),
+      heartSymbol: clampStr(copy.stepE.heartSymbol, '♡', 0, 40),
+      referenceCodeLabel: clampStr(copy.stepE.referenceCodeLabel, '', 0, 200),
       backToDeskBtn: clampStr(copy.stepE.backToDeskBtn, '', 0, 200),
       writeAnotherBtn: clampStr(copy.stepE.writeAnotherBtn, '', 0, 200),
       editAgainBtn: clampStr(copy.stepE.editAgainBtn, '', 0, 200),
       unsavedWarningTitle: clampStr(copy.stepE.unsavedWarningTitle, '', 0, 400),
       unsavedWarningBody: clampStr(copy.stepE.unsavedWarningBody, '', 0, 1000),
       retrySaveBtn: clampStr(copy.stepE.retrySaveBtn, '', 0, 200),
+      backToWriteBtn: clampStr(copy.stepE.backToWriteBtn, '', 0, 200),
     },
   };
 }
@@ -147,6 +202,7 @@ export function sanitizeLetterForFirestore(letter: LetterDocument): LetterDocume
 export interface AdminAuthSnapshot {
   user: User | null;
   isReady: boolean;
+  isVerifiedUser: boolean;
   isVerifiedOwner: boolean;
 }
 
@@ -154,6 +210,7 @@ export function subscribeAdminAuth(
   onUpdate: (snapshot: AdminAuthSnapshot) => void
 ): Unsubscribe {
   return onAuthStateChanged(auth, (user) => {
+    const isVerifiedUser = Boolean(user && user.emailVerified);
     const isVerifiedOwner = Boolean(
       user &&
         user.emailVerified &&
@@ -162,6 +219,7 @@ export function subscribeAdminAuth(
     onUpdate({
       user,
       isReady: true,
+      isVerifiedUser,
       isVerifiedOwner,
     });
   });
@@ -182,7 +240,7 @@ export async function signInAdminWithGoogle(): Promise<{
       return {
         ok: false,
         email,
-        errorMessage: `บัญชี ${email || 'ที่เลือก'} ไม่ใช่บัญชีเจ้าของเว็บ (${BOOTSTRAPPED_ADMIN_EMAIL}) กรุณาเลือกบัญชีเจ้าของเว็บเพื่อเผยแพร่ให้ทุกคนเห็น`,
+        errorMessage: `บัญชี ${email || 'ที่เลือก'} ไม่ใช่บัญชีผู้ดูแล (${BOOTSTRAPPED_ADMIN_EMAIL}) กรุณากดล็อกอินและเลือกบัญชี ${BOOTSTRAPPED_ADMIN_EMAIL}`,
       };
     }
     return { ok: true, email };
@@ -191,19 +249,48 @@ export async function signInAdminWithGoogle(): Promise<{
     if (code === 'auth/popup-closed-by-user' || code === 'auth/cancelled-popup-request') {
       return {
         ok: false,
-        errorMessage: 'ปิดหน้าต่างยืนยันตัวตนก่อนเสร็จสิ้น (ข้อความถูกเก็บไว้ในเครื่องแล้ว กดบันทึกอีกครั้งเพื่อเผยแพร่ให้ทุกคนเห็น)',
+        errorMessage: 'ปิดหน้าต่างยืนยันตัวตนก่อนเสร็จสิ้น',
       };
     }
     if (code === 'auth/unauthorized-domain') {
       return {
         ok: false,
         errorMessage:
-          'โดเมนนี้ยังไม่ได้เพิ่มใน Firebase Authentication > Settings > Authorized domains (หากแก้ไขผ่านหน้าเว็บหลักของ Studio ข้อมูลจะอัปเดตให้ทุกคนรวมถึง GitHub Pages เห็นตรงกันอัตโนมัติทันที)',
+          'โดเมนนี้ยังไม่ได้เพิ่มใน Firebase Authentication > Settings > Authorized domains',
       };
     }
     return {
       ok: false,
-      errorMessage: 'ไม่สามารถเปิดหน้าต่างยืนยันตัวตน Google ได้ กรุณาลองกดบันทึกใหม่อีกครั้ง',
+      errorMessage: 'ไม่สามารถเปิดหน้าต่างยืนยันตัวตน Google ได้ กรุณาลองใหม่อีกครั้ง',
+    };
+  }
+}
+
+export async function signInVisitorWithGoogle(): Promise<{
+  ok: boolean;
+  email?: string;
+  errorMessage?: string;
+}> {
+  try {
+    const cred = await signInWithPopup(auth, googleProvider);
+    if (!cred.user.emailVerified) {
+      return {
+        ok: false,
+        errorMessage: 'กรุณาใช้บัญชี Google ที่ยืนยันอีเมลแล้วเพื่อวางจดหมายในกล่องกลาง',
+      };
+    }
+    return { ok: true, email: cred.user.email || '' };
+  } catch (err: unknown) {
+    const code = (err as { code?: string })?.code || '';
+    if (code === 'auth/popup-closed-by-user' || code === 'auth/cancelled-popup-request') {
+      return {
+        ok: false,
+        errorMessage: 'ยกเลิกการยืนยันตัวตน Google',
+      };
+    }
+    return {
+      ok: false,
+      errorMessage: 'ไม่สามารถเปิดหน้าต่างยืนยันตัวตน Google ได้ กรุณาลองใหม่อีกครั้ง',
     };
   }
 }
@@ -247,7 +334,7 @@ export async function publishAdminStateToEveryone(params: {
   if (!activeUser) {
     return {
       ok: false,
-      errorMessage: 'ยังไม่ได้ยืนยันบัญชีเจ้าของเว็บสำหรับเผยแพร่ออนไลน์',
+      errorMessage: 'ยังไม่ได้ยืนยันบัญชีผู้ดูแลสำหรับเผยแพร่ออนไลน์',
     };
   }
 
@@ -256,7 +343,6 @@ export async function publishAdminStateToEveryone(params: {
     .slice(0, 30)
     .map(sanitizeLetterForFirestore);
 
-  // รับประกันว่ามี apology และ birthday เสมอ
   if (!sanitizedLetters.some((d) => d.id === 'apology')) {
     sanitizedLetters.unshift(sanitizeLetterForFirestore(APOLOGY_LETTER_CONTENT));
   }
@@ -283,6 +369,7 @@ export async function publishAdminStateToEveryone(params: {
       authorUid: activeUser.uid,
       letterOrderIds,
       siteTitle: sanitizedCopy.siteTitle,
+      globalBars: sanitizedCopy.globalBars,
       cover: sanitizedCopy.cover,
       stepA: sanitizedCopy.stepA,
       stepB: sanitizedCopy.stepB,
@@ -299,9 +386,10 @@ export async function publishAdminStateToEveryone(params: {
     } else {
       batch.set(liveSiteRef, {
         ...sitePayloadBase,
-        createdAt: existingSiteSnap.exists() && existingSiteSnap.data()?.createdAt
-          ? existingSiteSnap.data().createdAt
-          : serverTimestamp(),
+        createdAt:
+          existingSiteSnap.exists() && existingSiteSnap.data()?.createdAt
+            ? existingSiteSnap.data().createdAt
+            : serverTimestamp(),
       });
     }
 
@@ -327,9 +415,10 @@ export async function publishAdminStateToEveryone(params: {
       } else {
         batch.set(ltrRef, {
           ...baseFields,
-          createdAt: snap.exists() && snap.data()?.createdAt
-            ? snap.data().createdAt
-            : serverTimestamp(),
+          createdAt:
+            snap.exists() && snap.data()?.createdAt
+              ? snap.data().createdAt
+              : serverTimestamp(),
         });
       }
     });
@@ -352,7 +441,7 @@ export async function publishAdminStateToEveryone(params: {
       try {
         handleFirestoreError(error, OperationType.WRITE, liveSitePath);
       } catch {
-        // Logged structured FirestoreErrorInfo for diagnostics
+        // Logged structured FirestoreErrorInfo
       }
       return {
         ok: false,
@@ -364,6 +453,224 @@ export async function publishAdminStateToEveryone(params: {
       errorMessage: 'การเชื่อมต่อฐานข้อมูลขัดข้องชั่วคราว กรุณาลองกดบันทึกอีกครั้ง',
     };
   }
+}
+
+/**
+ * บันทึกหรืออัปเดตจดหมายตอบกลับลง /shared_replies/{letterId} เพื่อให้ทุกคนเปิดอ่านได้ร่วมกัน
+ * ผู้เขียนแก้ไขของตัวเองได้ และผู้ดูแล (Admin) แก้ไขได้ทุกฉบับของทุกคน
+ */
+export async function saveSharedReplyToFirestore(params: {
+  draft: ReplyLetterDraft;
+  promptSignInIfNeeded?: boolean;
+  requireAdmin?: boolean;
+}): Promise<PublishResult> {
+  const { draft, promptSignInIfNeeded = false, requireAdmin = false } = params;
+  let activeUser = auth.currentUser;
+
+  if (requireAdmin) {
+    if (
+      !activeUser ||
+      !activeUser.emailVerified ||
+      activeUser.email?.toLowerCase() !== BOOTSTRAPPED_ADMIN_EMAIL.toLowerCase()
+    ) {
+      if (!promptSignInIfNeeded) {
+        return { ok: false, errorMessage: 'ยังไม่ได้เข้าสู่ระบบผู้ดูแล' };
+      }
+      const loginRes = await signInAdminWithGoogle();
+      if (!loginRes.ok) {
+        return { ok: false, errorMessage: loginRes.errorMessage };
+      }
+      activeUser = auth.currentUser;
+    }
+  } else if (!activeUser || !activeUser.emailVerified) {
+    if (!promptSignInIfNeeded) {
+      return { ok: false, errorMessage: 'ยังไม่ได้ยืนยันบัญชีสำหรับแชร์ขึ้นกล่องกลาง' };
+    }
+    const loginRes = await signInVisitorWithGoogle();
+    if (!loginRes.ok) {
+      return { ok: false, errorMessage: loginRes.errorMessage };
+    }
+    activeUser = auth.currentUser;
+  }
+
+  if (!activeUser || !activeUser.emailVerified) {
+    return { ok: false, errorMessage: 'ยังไม่ได้เข้าสู่ระบบ' };
+  }
+
+  const safeId = sanitizeId(draft.letterId, 'ltr_shared');
+  const replyPath = `shared_replies/${safeId}`;
+  const replyRef = doc(db, 'shared_replies', safeId);
+
+  const safeTitle = clampStr(draft.title, 'จดหมายตอบกลับ', 1, 200);
+  const safeAuthor = clampStr(draft.author, 'คุณ', 1, 120);
+  const safeBody = clampStr(draft.body, safeTitle, 1, 8000);
+  const safeVersion = Math.max(1, Math.min(100000, Math.floor(draft.version || 1)));
+  const safeRecovery: 'synced' | 'completed' =
+    draft.recoveryState === 'completed' ? 'completed' : 'synced';
+
+  try {
+    const existingSnap = await getDoc(replyRef);
+    if (existingSnap.exists() && existingSnap.data()?.createdAt) {
+      await updateDoc(replyRef, {
+        lastEditorUid: activeUser.uid,
+        title: safeTitle,
+        author: safeAuthor,
+        body: safeBody,
+        version: safeVersion,
+        recoveryState: safeRecovery,
+        updatedAt: serverTimestamp(),
+      });
+    } else {
+      await setDoc(replyRef, {
+        letterId: safeId,
+        authorUid: activeUser.uid,
+        lastEditorUid: activeUser.uid,
+        visibility: 'public',
+        title: safeTitle,
+        author: safeAuthor,
+        body: safeBody,
+        version: safeVersion,
+        recoveryState: safeRecovery,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
+    }
+    return { ok: true };
+  } catch (error: unknown) {
+    if (isPermissionDeniedError(error)) {
+      try {
+        handleFirestoreError(error, OperationType.WRITE, replyPath);
+      } catch {
+        // Logged structured FirestoreErrorInfo
+      }
+      return {
+        ok: false,
+        errorMessage: 'ไม่มีสิทธิ์แก้ไขจดหมายฉบับนี้บนคลาวด์ กรุณาเข้าสู่ระบบด้วยบัญชีผู้เขียนหรือผู้ดูแล',
+      };
+    }
+    return {
+      ok: false,
+      errorMessage: 'ไม่สามารถซิงก์จดหมายขึ้นกล่องกลางได้ในขณะนี้',
+    };
+  }
+}
+
+export async function deleteSharedReplyFromFirestore(
+  letterId: string,
+  requireAdmin = false
+): Promise<PublishResult> {
+  let activeUser = auth.currentUser;
+  if (requireAdmin) {
+    if (
+      !activeUser ||
+      !activeUser.emailVerified ||
+      activeUser.email?.toLowerCase() !== BOOTSTRAPPED_ADMIN_EMAIL.toLowerCase()
+    ) {
+      const loginRes = await signInAdminWithGoogle();
+      if (!loginRes.ok) {
+        return { ok: false, errorMessage: loginRes.errorMessage };
+      }
+      activeUser = auth.currentUser;
+    }
+  }
+
+  if (!activeUser || !activeUser.emailVerified) {
+    return { ok: false, errorMessage: 'ยังไม่ได้เข้าสู่ระบบเพื่อลบจดหมายออนไลน์' };
+  }
+
+  const safeId = sanitizeId(letterId, '');
+  if (!safeId) return { ok: false, errorMessage: 'รหัสจดหมายไม่ถูกต้อง' };
+
+  const replyPath = `shared_replies/${safeId}`;
+  try {
+    await deleteDoc(doc(db, 'shared_replies', safeId));
+    return { ok: true };
+  } catch (error: unknown) {
+    if (isPermissionDeniedError(error)) {
+      try {
+        handleFirestoreError(error, OperationType.DELETE, replyPath);
+      } catch {
+        // Logged structured FirestoreErrorInfo
+      }
+      return {
+        ok: false,
+        errorMessage: 'ไม่มีสิทธิ์ลบจดหมายฉบับนี้จากกล่องกลาง',
+      };
+    }
+    return { ok: false, errorMessage: 'ลบจดหมายจากกล่องกลางไม่สำเร็จ' };
+  }
+}
+
+function timestampToIso(val: unknown): string {
+  if (val instanceof Timestamp) {
+    return val.toDate().toISOString();
+  }
+  if (
+    val &&
+    typeof val === 'object' &&
+    'toDate' in val &&
+    typeof (val as { toDate: () => Date }).toDate === 'function'
+  ) {
+    return (val as { toDate: () => Date }).toDate().toISOString();
+  }
+  return new Date().toISOString();
+}
+
+/**
+ * Subscribe ผู้เข้าชมทุกคนเข้ากับรายการจดหมายตอบกลับสาธารณะ (/shared_replies) แบบเรียลไทม์
+ */
+export function subscribeToSharedReplies(
+  onRepliesChange: (replies: ReplyLetterDraft[]) => void
+): Unsubscribe {
+  const sharedPath = 'shared_replies';
+  const q = query(
+    collection(db, 'shared_replies'),
+    where('visibility', '==', 'public')
+  );
+
+  return onSnapshot(
+    q,
+    (snapshot) => {
+      const list: ReplyLetterDraft[] = [];
+      snapshot.forEach((docSnap) => {
+        const d = docSnap.data();
+        if (
+          typeof d.letterId === 'string' &&
+          typeof d.title === 'string' &&
+          typeof d.author === 'string' &&
+          typeof d.body === 'string'
+        ) {
+          const updatedIso = timestampToIso(d.updatedAt || d.createdAt);
+          const ver = typeof d.version === 'number' ? d.version : 1;
+          list.push({
+            letterId: d.letterId,
+            title: d.title,
+            author: d.author,
+            body: d.body,
+            version: ver,
+            lastModifiedIso: updatedIso,
+            lastSavedVersion: ver,
+            lastSavedIso: updatedIso,
+            recoveryState: d.recoveryState === 'completed' ? 'completed' : 'synced',
+            authorUid: typeof d.authorUid === 'string' ? d.authorUid : undefined,
+            isPublicCloud: true,
+          });
+        }
+      });
+
+      list.sort((a, b) => b.lastModifiedIso.localeCompare(a.lastModifiedIso));
+      onRepliesChange(list);
+    },
+    (error) => {
+      if (isPermissionDeniedError(error)) {
+        try {
+          handleFirestoreError(error, OperationType.LIST, sharedPath);
+        } catch {
+          // Logged structured error
+        }
+      }
+    }
+  );
 }
 
 /**
@@ -392,7 +699,6 @@ export function subscribeToPublishedSiteState(callbacks: {
       }
     }
 
-    // รับประกันซองหลักหากเพิ่งซิงก์บางส่วน
     if (!ordered.some((d) => d.id === 'apology')) {
       ordered.unshift(
         letterCache.get('apology') || {

@@ -71,7 +71,6 @@ export function StepAIdentity({
 
   return (
     <section className="w-full max-w-xl mx-auto px-5 py-6 flex flex-col min-h-[78vh]">
-      {/* ปุ่มมุมซ้ายบนตามภาพต้นฉบับ */}
       <div className="flex items-center justify-start">
         {subState === 'initial' ? (
           <button
@@ -97,7 +96,6 @@ export function StepAIdentity({
         )}
       </div>
 
-      {/* เนื้อหากึ่งกลางหน้าจอโปร่งโล่งรับแสงเทียน */}
       <div className="flex-1 flex flex-col items-center justify-center text-center py-8">
         {subState === 'initial' && (
           <div className="animate-scene-enter space-y-8 w-full max-w-md">

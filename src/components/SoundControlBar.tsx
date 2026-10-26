@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { BgmTrack } from '../config.example';
+import { useSiteCopy } from '../context/SiteCopyContext';
 import { SoundMode } from '../services/soundEngine';
 import {
   ChevronDown,
@@ -33,6 +34,7 @@ export function SoundControlBar({
   onSelectTrack,
   onNextTrack,
 }: SoundControlBarProps) {
+  const copy = useSiteCopy();
   const [menuOpen, setMenuOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement | null>(null);
 
@@ -56,9 +58,11 @@ export function SoundControlBar({
   const activeTrack = tracks[currentTrackIndex] || tracks[0];
 
   const getButtonLabel = () => {
-    if (isMuted) return 'ปิดเสียงอยู่';
-    if (!isAudioUnlocked) return 'แตะเพื่อเปิดเพลง';
-    if (soundMode === SoundMode.SFX_ONLY) return 'เฉพาะเสียงกระดาษ/พิมพ์';
+    if (isMuted) return copy.globalBars.soundMutedBtn;
+    if (!isAudioUnlocked) return copy.globalBars.soundTapToPlayBtn;
+    if (soundMode === SoundMode.SFX_ONLY) {
+      return copy.globalBars.soundPlayingSfxOnlyBtn;
+    }
     return activeTrack ? `เพลง: ${activeTrack.title}` : 'เสียงเพลง & จดหมาย';
   };
 

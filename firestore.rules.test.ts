@@ -1,6 +1,6 @@
 /**
  * Phase 0 & Phase 5 Security TDD Runner — Verifies all "Dirty Dozen" adversarial payloads
- * return PERMISSION_DENIED and legitimate Admin / Visitor operations succeed.
+ * return PERMISSION_DENIED and legitimate Admin / Visitor / Public Reader operations succeed.
  */
 import { UI_COPY } from './src/content/letters';
 
@@ -70,7 +70,7 @@ function isValidPublishedLetter(data: Record<string, unknown>, auth: SimAuth | n
 function isValidPublishedSiteConfig(data: Record<string, unknown>, auth: SimAuth | null): boolean {
   if (!auth) return false;
   const keys = [
-    'configId', 'authorUid', 'letterOrderIds', 'siteTitle',
+    'configId', 'authorUid', 'letterOrderIds', 'siteTitle', 'globalBars',
     'cover', 'stepA', 'stepB', 'stepC', 'stepD', 'stepE',
     'createdAt', 'updatedAt',
   ];
@@ -82,6 +82,28 @@ function isValidPublishedSiteConfig(data: Record<string, unknown>, auth: SimAuth
   }
   if (!isValidId(data.letterOrderIds[0], 64)) return false;
   if (!isBoundedString(data.siteTitle, 1, 200)) return false;
+  return typeof data.createdAt === 'number' && typeof data.updatedAt === 'number';
+}
+
+function isValidSharedReplyLetter(data: Record<string, unknown>, auth: SimAuth | null): boolean {
+  if (!auth) return false;
+  const keys = [
+    'letterId', 'authorUid', 'lastEditorUid', 'visibility',
+    'title', 'author', 'body', 'version', 'recoveryState',
+    'createdAt', 'updatedAt',
+  ];
+  if (!hasExactKeys(data, keys)) return false;
+  if (!isValidId(data.letterId, 64)) return false;
+  if (!isValidUid(data.authorUid, 128)) return false;
+  if (!isValidUid(data.lastEditorUid, 128) || data.lastEditorUid !== auth.uid) return false;
+  if (data.visibility !== 'public') return false;
+  if (!isBoundedString(data.title, 1, 200)) return false;
+  if (!isBoundedString(data.author, 1, 120)) return false;
+  if (!isBoundedString(data.body, 1, 8000)) return false;
+  if (typeof data.version !== 'number' || !Number.isInteger(data.version) || data.version < 1 || data.version > 100000) {
+    return false;
+  }
+  if (data.recoveryState !== 'synced' && data.recoveryState !== 'completed') return false;
   return typeof data.createdAt === 'number' && typeof data.updatedAt === 'number';
 }
 
@@ -167,15 +189,59 @@ function evaluateRules(req: SimRequest, adminRegistry = new Set<string>()): 'ALL
     return 'PERMISSION_DENIED';
   }
 
+  if (req.collection === 'shared_replies') {
+    if (req.op === 'get') {
+      const ok = isValidId(req.docId, 64) && (!req.existing || req.existing.visibility === 'public');
+      return ok ? 'ALLOW' : 'PERMISSION_DENIED';
+    }
+    if (req.op === 'list') {
+      return req.existing?.visibility === 'public' ? 'ALLOW' : 'PERMISSION_DENIED';
+    }
+    if (req.op === 'create' && req.incoming) {
+      const ok =
+        Boolean(req.auth?.email_verified) &&
+        isValidId(req.docId, 64) &&
+        req.incoming.letterId === req.docId &&
+        req.incoming.authorUid === req.auth?.uid &&
+        isValidSharedReplyLetter(req.incoming, req.auth) &&
+        req.incoming.createdAt === req.timeMs &&
+        req.incoming.updatedAt === req.timeMs;
+      return ok ? 'ALLOW' : 'PERMISSION_DENIED';
+    }
+    if (req.op === 'update' && req.incoming && req.existing) {
+      const ok =
+        Boolean(req.auth?.email_verified) &&
+        isValidSharedReplyLetter(req.incoming, req.auth) &&
+        isValidId(req.docId, 64) &&
+        req.incoming.letterId === req.existing.letterId &&
+        req.incoming.authorUid === req.existing.authorUid &&
+        req.incoming.visibility === req.existing.visibility &&
+        req.incoming.createdAt === req.existing.createdAt &&
+        req.incoming.updatedAt === req.timeMs &&
+        (req.auth?.uid === req.existing.authorUid || isAdmin(req.auth, adminRegistry));
+      return ok ? 'ALLOW' : 'PERMISSION_DENIED';
+    }
+    if (req.op === 'delete' && req.existing) {
+      const ok =
+        Boolean(req.auth?.email_verified) &&
+        isValidId(req.docId, 64) &&
+        (req.auth?.uid === req.existing.authorUid || isAdmin(req.auth, adminRegistry));
+      return ok ? 'ALLOW' : 'PERMISSION_DENIED';
+    }
+    return 'PERMISSION_DENIED';
+  }
+
   return 'PERMISSION_DENIED';
 }
 
 const NOW = 1761430000000;
 const OWNER_AUTH: SimAuth = { uid: '1S14sAQRlFPmPpEODec6kgEhhuy2', email: 'xox89m97@gmail.com', email_verified: true };
+const VISITOR_AUTH: SimAuth = { uid: 'visitor_uid_1', email: 'reader@example.com', email_verified: true };
+const INTRUDER_AUTH: SimAuth = { uid: 'intruder_uid_1', email: 'intruder@example.com', email_verified: true };
 
 const baseSiteConfig = {
   configId: 'live_site',
-  authorUid: '1S14sAQRlFPmPpEODec6kgEhhuy2',
+  authorUid: OWNER_AUTH.uid,
   letterOrderIds: ['apology', 'birthday'],
   ...UI_COPY,
   createdAt: NOW,
@@ -184,7 +250,7 @@ const baseSiteConfig = {
 
 const baseLetter = {
   id: 'apology',
-  authorUid: '1S14sAQRlFPmPpEODec6kgEhhuy2',
+  authorUid: OWNER_AUTH.uid,
   isOwnerApprovedForProduction: true,
   letterTitle: 'จดหมายขอโทษ',
   senderLabel: 'จาก: ฉัน',
@@ -193,6 +259,20 @@ const baseLetter = {
   paragraphs: ['ขอโทษจากใจจริง'],
   signOff: 'ด้วยความจริงใจ',
   senderName: 'ฉัน',
+  createdAt: NOW,
+  updatedAt: NOW,
+};
+
+const baseSharedReply = {
+  letterId: 'ltr_1234567890ab',
+  authorUid: VISITOR_AUTH.uid,
+  lastEditorUid: VISITOR_AUTH.uid,
+  visibility: 'public',
+  title: 'ขอบคุณนะ',
+  author: 'คนสำคัญ',
+  body: 'อ่านจดหมายแล้วนะ ขอบคุณมาก ๆ',
+  version: 1,
+  recoveryState: 'completed',
   createdAt: NOW,
   updatedAt: NOW,
 };
@@ -214,51 +294,75 @@ const dirtyDozenCases: Array<{ name: string; req: SimRequest }> = [
     },
   },
   {
-    name: '3. Non-admin verified user overwrite attempt',
+    name: '3. Non-admin verified user overwrite attempt on owner letter',
     req: {
-      auth: { uid: 'intruder_1', email: 'intruder@example.com', email_verified: true },
+      auth: INTRUDER_AUTH,
       timeMs: NOW,
       op: 'create',
       collection: 'published_letters',
       docId: 'apology',
-      incoming: { ...baseLetter, authorUid: 'intruder_1' },
+      incoming: { ...baseLetter, authorUid: INTRUDER_AUTH.uid },
     },
   },
   {
     name: '4. Self-assigned admin privilege escalation',
     req: {
-      auth: { uid: 'intruder_1', email: 'intruder@example.com', email_verified: true },
+      auth: INTRUDER_AUTH,
       timeMs: NOW,
       op: 'create',
       collection: 'admins',
-      docId: 'intruder_1',
-      incoming: { uid: 'intruder_1', createdAt: NOW },
+      docId: INTRUDER_AUTH.uid,
+      incoming: { uid: INTRUDER_AUTH.uid, createdAt: NOW },
     },
   },
   {
-    name: '5. Shadow / ghost field injection',
+    name: '5. Shadow / ghost field injection on shared_replies',
     req: {
-      auth: OWNER_AUTH,
+      auth: VISITOR_AUTH,
       timeMs: NOW,
       op: 'create',
-      collection: 'published_letters',
-      docId: 'apology',
-      incoming: { ...baseLetter, isHacked: true },
+      collection: 'shared_replies',
+      docId: 'ltr_1234567890ab',
+      incoming: { ...baseSharedReply, isPinned: true },
     },
   },
   {
-    name: '6. Identity spoofing (authorUid != request.auth.uid)',
+    name: '6. Identity spoofing on shared_replies create',
     req: {
-      auth: OWNER_AUTH,
+      auth: INTRUDER_AUTH,
       timeMs: NOW,
       op: 'create',
-      collection: 'published_letters',
-      docId: 'apology',
-      incoming: { ...baseLetter, authorUid: 'other_user_uid' },
+      collection: 'shared_replies',
+      docId: 'ltr_1234567890ab',
+      incoming: { ...baseSharedReply, authorUid: VISITOR_AUTH.uid, lastEditorUid: INTRUDER_AUTH.uid },
     },
   },
   {
-    name: '7. Client timestamp forgery (updatedAt != request.time)',
+    name: '7. Unauthorized cross-user edit on shared_replies',
+    req: {
+      auth: INTRUDER_AUTH,
+      timeMs: NOW + 1000,
+      op: 'update',
+      collection: 'shared_replies',
+      docId: 'ltr_1234567890ab',
+      existing: baseSharedReply,
+      incoming: { ...baseSharedReply, lastEditorUid: INTRUDER_AUTH.uid, title: 'Hacked', updatedAt: NOW + 1000 },
+    },
+  },
+  {
+    name: '8. Immutable authorUid mutation on shared_replies update',
+    req: {
+      auth: OWNER_AUTH,
+      timeMs: NOW + 1000,
+      op: 'update',
+      collection: 'shared_replies',
+      docId: 'ltr_1234567890ab',
+      existing: baseSharedReply,
+      incoming: { ...baseSharedReply, authorUid: OWNER_AUTH.uid, lastEditorUid: OWNER_AUTH.uid, updatedAt: NOW + 1000 },
+    },
+  },
+  {
+    name: '9. Client timestamp forgery (updatedAt != request.time)',
     req: {
       auth: OWNER_AUTH,
       timeMs: NOW,
@@ -269,46 +373,37 @@ const dirtyDozenCases: Array<{ name: string; req: SimRequest }> = [
     },
   },
   {
-    name: '8. Immutable createdAt mutation on update',
+    name: '10. ID poisoning with special chars',
     req: {
-      auth: OWNER_AUTH,
-      timeMs: NOW + 1000,
-      op: 'update',
-      collection: 'published_site',
-      docId: 'live_site',
-      existing: baseSiteConfig,
-      incoming: { ...baseSiteConfig, createdAt: NOW + 1000, updatedAt: NOW + 1000 },
-    },
-  },
-  {
-    name: '9. ID poisoning with special chars',
-    req: {
-      auth: OWNER_AUTH,
+      auth: VISITOR_AUTH,
       timeMs: NOW,
       op: 'create',
-      collection: 'published_letters',
+      collection: 'shared_replies',
       docId: 'bad$id/inject',
-      incoming: { ...baseLetter, id: 'bad$id/inject' },
+      incoming: { ...baseSharedReply, letterId: 'bad$id/inject' },
     },
   },
   {
-    name: '10. Denial-of-Wallet oversized title string',
+    name: '11. Denial-of-Wallet oversized body string',
     req: {
-      auth: OWNER_AUTH,
+      auth: VISITOR_AUTH,
       timeMs: NOW,
       op: 'create',
-      collection: 'published_letters',
-      docId: 'apology',
-      incoming: { ...baseLetter, letterTitle: 'ก'.repeat(250) },
+      collection: 'shared_replies',
+      docId: 'ltr_1234567890ab',
+      incoming: { ...baseSharedReply, body: 'ก'.repeat(8500) },
     },
   },
   {
-    name: '11. Collection list scraping on published_letters',
-    req: { auth: null, timeMs: NOW, op: 'list', collection: 'published_letters', docId: '' },
-  },
-  {
-    name: '12. Core apology envelope deletion',
-    req: { auth: OWNER_AUTH, timeMs: NOW, op: 'delete', collection: 'published_letters', docId: 'apology' },
+    name: '12. Unfiltered list query without visibility == public',
+    req: {
+      auth: null,
+      timeMs: NOW,
+      op: 'list',
+      collection: 'shared_replies',
+      docId: '',
+      existing: { ...baseSharedReply, visibility: 'private' },
+    },
   },
 ];
 
@@ -319,24 +414,52 @@ for (const testCase of dirtyDozenCases) {
   }
 }
 
-// Verify legitimate public visitor single-doc reads & verified admin writes succeed
+// Verify legitimate public visitor reads, visitor reply creates, and admin edits on ANY letter succeed
 if (evaluateRules({ auth: null, timeMs: NOW, op: 'get', collection: 'published_site', docId: 'live_site' }) !== 'ALLOW') {
   throw new Error('Visitor get on published_site/live_site must be ALLOWED');
 }
-if (evaluateRules({ auth: null, timeMs: NOW, op: 'get', collection: 'published_letters', docId: 'apology' }) !== 'ALLOW') {
-  throw new Error('Visitor get on published_letters/apology must be ALLOWED');
+if (
+  evaluateRules({
+    auth: null,
+    timeMs: NOW,
+    op: 'list',
+    collection: 'shared_replies',
+    docId: '',
+    existing: baseSharedReply,
+  }) !== 'ALLOW'
+) {
+  throw new Error('Public list with visibility == public on shared_replies must be ALLOWED');
+}
+if (
+  evaluateRules({
+    auth: VISITOR_AUTH,
+    timeMs: NOW,
+    op: 'create',
+    collection: 'shared_replies',
+    docId: 'ltr_1234567890ab',
+    incoming: baseSharedReply,
+  }) !== 'ALLOW'
+) {
+  throw new Error('Verified visitor create on shared_replies must be ALLOWED');
 }
 if (
   evaluateRules({
     auth: OWNER_AUTH,
-    timeMs: NOW,
-    op: 'create',
-    collection: 'published_site',
-    docId: 'live_site',
-    incoming: baseSiteConfig,
+    timeMs: NOW + 2000,
+    op: 'update',
+    collection: 'shared_replies',
+    docId: 'ltr_1234567890ab',
+    existing: baseSharedReply,
+    incoming: {
+      ...baseSharedReply,
+      lastEditorUid: OWNER_AUTH.uid,
+      title: 'ขอบคุณนะ (แอดมินแก้คำผิด)',
+      version: 2,
+      updatedAt: NOW + 2000,
+    },
   }) !== 'ALLOW'
 ) {
-  throw new Error('Verified owner create on published_site/live_site must be ALLOWED');
+  throw new Error('Verified Admin editing any visitor reply letter must be ALLOWED');
 }
 
 console.log('All 12 Dirty Dozen adversarial payloads returned PERMISSION_DENIED and legitimate flows passed.');

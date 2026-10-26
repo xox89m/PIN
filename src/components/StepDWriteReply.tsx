@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { APP_CONFIG } from '../config';
 import { useSiteCopy } from '../context/SiteCopyContext';
 import { ReplyLetterDraft, SaveStatus } from '../services/letterStorage';
+import { PublishResult } from '../services/cloudConfigSync';
 import { HandDrawnPenIllustration } from './EnvelopeIllustrations';
 import {
   Send,
@@ -12,6 +13,7 @@ import {
   WifiOff,
   AlertCircle,
   Flame,
+  Globe,
 } from 'lucide-react';
 import { soundEngine } from '../services/soundEngine';
 
@@ -37,6 +39,8 @@ interface StepDWriteReplyProps {
   ) => void;
   saveStatus: SaveStatus;
   statusMessage: string;
+  isVerifiedGoogleUser: boolean;
+  onConnectVisitorGoogle: () => Promise<PublishResult>;
   onManualRetrySave: () => void;
   onRequestClearDraft: () => void;
   onBackToDesk: () => void;
@@ -48,6 +52,8 @@ export function StepDWriteReply({
   onUpdateDraftField,
   saveStatus,
   statusMessage,
+  isVerifiedGoogleUser,
+  onConnectVisitorGoogle,
   onManualRetrySave,
   onRequestClearDraft,
   onBackToDesk,
@@ -56,6 +62,8 @@ export function StepDWriteReply({
   const copy = useSiteCopy();
   const [confirmClearModalOpen, setConfirmClearModalOpen] = useState(false);
   const [penStrokeTick, setPenStrokeTick] = useState(0);
+  const [isConnectingGoogle, setIsConnectingGoogle] = useState(false);
+  const [googleFeedback, setGoogleFeedback] = useState('');
 
   const nudgePenOnWrite = () => {
     setPenStrokeTick((prev) => prev + 1);
@@ -67,28 +75,28 @@ export function StepDWriteReply({
         return (
           <span className="inline-flex items-center gap-2 text-xs sm:text-sm text-[#4A3525]">
             <RotateCw className="w-4 h-4 animate-spin" aria-hidden="true" />
-            <span>กำลังบันทึก...</span>
+            <span>{copy.stepD.savingStatusText}</span>
           </span>
         );
       case SaveStatus.SAVED:
         return (
           <span className="inline-flex items-center gap-2 text-xs sm:text-sm text-[#244F30] font-medium">
             <Check className="w-4 h-4" aria-hidden="true" />
-            <span>บันทึกแล้ว</span>
+            <span>{copy.stepD.savedStatusText}</span>
           </span>
         );
       case SaveStatus.OFFLINE_PENDING:
         return (
           <span className="inline-flex items-center gap-2 text-xs sm:text-sm text-[#784B12] font-medium">
             <WifiOff className="w-4 h-4" aria-hidden="true" />
-            <span>ออฟไลน์ กำลังรอส่งข้อมูล</span>
+            <span>{copy.stepD.offlineStatusText}</span>
           </span>
         );
       case SaveStatus.ERROR:
         return (
           <span className="inline-flex items-center gap-2 text-xs sm:text-sm text-[#85271D] font-medium">
             <AlertCircle className="w-4 h-4" aria-hidden="true" />
-            <span>บันทึกไม่สำเร็จ</span>
+            <span>{copy.stepD.errorStatusText}</span>
           </span>
         );
       case SaveStatus.UNSAVED:
@@ -96,7 +104,7 @@ export function StepDWriteReply({
         return (
           <span className="inline-flex items-center gap-2 text-xs sm:text-sm text-[#5A4636]">
             <Flame className="w-4 h-4 text-[#9E6B2B]" aria-hidden="true" />
-            <span>บันทึกอัตโนมัติขณะพิมพ์</span>
+            <span>{copy.stepD.autosaveHintText}</span>
           </span>
         );
     }
@@ -104,7 +112,6 @@ export function StepDWriteReply({
 
   return (
     <section className="w-full max-w-2xl mx-auto px-4 py-6 sm:py-8">
-      {/* ปุ่มกลับมุมซ้ายบนเหมือนภาพช่องที่ 7 */}
       <div className="mb-3 flex items-center justify-between">
         <button
           type="button"
@@ -119,7 +126,6 @@ export function StepDWriteReply({
         </button>
       </div>
 
-      {/* กระดาษจดหมายวินเทจเอียงเล็กน้อยอย่างเป็นธรรมชาติบนโต๊ะไม้เหมือนภาพช่องที่ 7 */}
       <div className="animate-parchment-unfold relative vintage-parchment p-6 sm:p-9 space-y-5">
         <header className="flex items-center justify-center gap-2.5 pb-2">
           <Send className="w-4 h-4 text-[#3D2B1D] -rotate-12" aria-hidden="true" />
@@ -128,13 +134,48 @@ export function StepDWriteReply({
           </h1>
         </header>
 
-        {/* คำชี้แจงความเป็นส่วนตัวขนาดกะทัดรัดชัดเจน */}
-        <div className="px-3.5 py-2.5 rounded-lg bg-[#DFD2C0]/65 border border-[#8C765C]/35 text-xs text-[#4A3525] leading-relaxed">
+        <div className="px-3.5 py-2.5 rounded-lg bg-[#DFD2C0]/65 border border-[#8C765C]/35 text-xs text-[#4A3525] leading-relaxed space-y-2">
           <p>{copy.stepD.privacyNoticeBody}</p>
-          <p className="mt-1 text-[11px] text-[#5A4636]">
-            {copy.stepD.deletionPolicyNote} · รหัสอ้างอิง:{' '}
-            <span className="font-mono tabular-nums">{draft.letterId}</span>
-          </p>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <p className="text-[11px] text-[#5A4636]">
+              {copy.stepD.deletionPolicyNote} · {copy.stepC.referenceIdLabel}{' '}
+              <span className="font-mono tabular-nums">{draft.letterId}</span>
+            </p>
+
+            {isVerifiedGoogleUser ? (
+              <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-[#1F5129]">
+                <Globe className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
+                <span>เปิดแชร์ให้ทุกคนอ่านในกล่องกลางแล้ว</span>
+              </span>
+            ) : (
+              <button
+                type="button"
+                disabled={isConnectingGoogle}
+                onClick={() => {
+                  setIsConnectingGoogle(true);
+                  setGoogleFeedback('');
+                  soundEngine.playSoftTapSfx();
+                  void onConnectVisitorGoogle().then((res) => {
+                    setIsConnectingGoogle(false);
+                    if (!res.ok && res.errorMessage) {
+                      setGoogleFeedback(res.errorMessage);
+                    }
+                  });
+                }}
+                className="inline-flex items-center gap-1.5 min-h-[32px] px-2.5 py-1 rounded-md bg-[#3A281B] text-[#FAF2E8] text-[11px] font-medium whitespace-nowrap cursor-pointer disabled:opacity-50"
+              >
+                <Globe className="w-3 h-3 shrink-0" aria-hidden="true" />
+                <span>
+                  {isConnectingGoogle
+                    ? 'กำลังเชื่อมต่อ...'
+                    : 'เชื่อมต่อ Google เพื่อให้ทุกคนอ่านได้'}
+                </span>
+              </button>
+            )}
+          </div>
+          {googleFeedback && (
+            <p className="text-[11px] text-[#7A2017] font-medium">{googleFeedback}</p>
+          )}
         </div>
 
         {/* ช่องชื่อจดหมาย */}
@@ -253,7 +294,6 @@ export function StepDWriteReply({
           <p className="text-xs font-medium text-[#7A2E24]">{statusMessage}</p>
         )}
 
-        {/* แถบสถานะกำลังบันทึก + ปุ่มพับซองด้านล่างเหมือนภาพช่องที่ 7 */}
         <div className="pt-2 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 border-t border-[#5C442E]/20">
           <div className="flex flex-wrap items-center gap-3" aria-live="polite">
             {renderSaveStatusIndicator()}
@@ -264,7 +304,7 @@ export function StepDWriteReply({
                 onClick={onManualRetrySave}
                 className="min-h-[38px] px-3 py-1 text-xs font-semibold text-[#2B1F16] bg-[#DFD2C0] hover:bg-[#D4C3AC] rounded-lg whitespace-nowrap shrink-0 cursor-pointer"
               >
-                ลองบันทึกใหม่
+                {copy.stepD.retryInlineBtn}
               </button>
             )}
 
@@ -291,7 +331,6 @@ export function StepDWriteReply({
         </div>
       </div>
 
-      {/* ปากกาวางข้างขอบกระดาษด้านล่างขวา ขยับเบา ๆ ตามจังหวะพิมพ์ */}
       <div className="mt-3 flex justify-end pr-2">
         <div
           key={penStrokeTick}
@@ -301,7 +340,6 @@ export function StepDWriteReply({
         </div>
       </div>
 
-      {/* Modal ยืนยันก่อนล้างฉบับร่างในเครื่อง */}
       {confirmClearModalOpen && (
         <div
           role="dialog"
@@ -314,10 +352,10 @@ export function StepDWriteReply({
               id="clear-draft-title"
               className="font-display text-lg font-semibold text-[#2B1F16]"
             >
-              ต้องการล้างฉบับร่างในเครื่องใช่ไหม?
+              {copy.stepD.clearModalTitle}
             </h3>
             <p className="text-sm text-[#4A3525] leading-relaxed">
-              ข้อความที่พิมพ์ค้างไว้ในเบราว์เซอร์เครื่องนี้จะถูกล้างออกและเริ่มรหัสจดหมายฉบับใหม่ (การล้างนี้จะไม่ลบไฟล์ที่ส่งเข้า Google Drive ไปแล้ว)
+              {copy.stepD.clearModalBody}
             </p>
             <div className="flex items-center justify-end gap-3 pt-2">
               <button
@@ -325,7 +363,7 @@ export function StepDWriteReply({
                 onClick={() => setConfirmClearModalOpen(false)}
                 className="min-h-[44px] px-4 py-2 text-sm font-medium text-[#4A3525] hover:bg-black/5 rounded-lg whitespace-nowrap shrink-0 cursor-pointer"
               >
-                ยกเลิก
+                {copy.stepD.clearModalCancelBtn}
               </button>
               <button
                 type="button"
@@ -335,7 +373,7 @@ export function StepDWriteReply({
                 }}
                 className="min-h-[44px] px-5 py-2 text-sm font-semibold bg-[#8F2D22] hover:bg-[#752219] text-white rounded-full whitespace-nowrap shrink-0 cursor-pointer"
               >
-                ยืนยันล้างฉบับร่าง
+                {copy.stepD.clearModalConfirmBtn}
               </button>
             </div>
           </div>
