@@ -2,7 +2,6 @@ import React, { useState } from 'react';
 import { APP_CONFIG } from '../config';
 import { useSiteCopy } from '../context/SiteCopyContext';
 import { ReplyLetterDraft, SaveStatus } from '../services/letterStorage';
-import { PublishResult } from '../services/cloudConfigSync';
 import { HandDrawnPenIllustration } from './EnvelopeIllustrations';
 import {
   Send,
@@ -13,7 +12,6 @@ import {
   WifiOff,
   AlertCircle,
   Flame,
-  Globe,
 } from 'lucide-react';
 import { soundEngine } from '../services/soundEngine';
 
@@ -39,8 +37,6 @@ interface StepDWriteReplyProps {
   ) => void;
   saveStatus: SaveStatus;
   statusMessage: string;
-  isVerifiedGoogleUser: boolean;
-  onConnectVisitorGoogle: () => Promise<PublishResult>;
   onManualRetrySave: () => void;
   onRequestClearDraft: () => void;
   onBackToDesk: () => void;
@@ -52,8 +48,6 @@ export function StepDWriteReply({
   onUpdateDraftField,
   saveStatus,
   statusMessage,
-  isVerifiedGoogleUser,
-  onConnectVisitorGoogle,
   onManualRetrySave,
   onRequestClearDraft,
   onBackToDesk,
@@ -62,8 +56,6 @@ export function StepDWriteReply({
   const copy = useSiteCopy();
   const [confirmClearModalOpen, setConfirmClearModalOpen] = useState(false);
   const [penStrokeTick, setPenStrokeTick] = useState(0);
-  const [isConnectingGoogle, setIsConnectingGoogle] = useState(false);
-  const [googleFeedback, setGoogleFeedback] = useState('');
 
   const nudgePenOnWrite = () => {
     setPenStrokeTick((prev) => prev + 1);
@@ -134,48 +126,12 @@ export function StepDWriteReply({
           </h1>
         </header>
 
-        <div className="px-3.5 py-2.5 rounded-lg bg-[#DFD2C0]/65 border border-[#8C765C]/35 text-xs text-[#4A3525] leading-relaxed space-y-2">
+        <div className="px-3.5 py-2.5 rounded-lg bg-[#DFD2C0]/65 border border-[#8C765C]/35 text-xs text-[#4A3525] leading-relaxed space-y-1.5">
           <p>{copy.stepD.privacyNoticeBody}</p>
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <p className="text-[11px] text-[#5A4636]">
-              {copy.stepD.deletionPolicyNote} · {copy.stepC.referenceIdLabel}{' '}
-              <span className="font-mono tabular-nums">{draft.letterId}</span>
-            </p>
-
-            {isVerifiedGoogleUser ? (
-              <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-[#1F5129]">
-                <Globe className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
-                <span>เปิดแชร์ให้ทุกคนอ่านในกล่องกลางแล้ว</span>
-              </span>
-            ) : (
-              <button
-                type="button"
-                disabled={isConnectingGoogle}
-                onClick={() => {
-                  setIsConnectingGoogle(true);
-                  setGoogleFeedback('');
-                  soundEngine.playSoftTapSfx();
-                  void onConnectVisitorGoogle().then((res) => {
-                    setIsConnectingGoogle(false);
-                    if (!res.ok && res.errorMessage) {
-                      setGoogleFeedback(res.errorMessage);
-                    }
-                  });
-                }}
-                className="inline-flex items-center gap-1.5 min-h-[32px] px-2.5 py-1 rounded-md bg-[#3A281B] text-[#FAF2E8] text-[11px] font-medium whitespace-nowrap cursor-pointer disabled:opacity-50"
-              >
-                <Globe className="w-3 h-3 shrink-0" aria-hidden="true" />
-                <span>
-                  {isConnectingGoogle
-                    ? 'กำลังเชื่อมต่อ...'
-                    : 'เชื่อมต่อ Google เพื่อให้ทุกคนอ่านได้'}
-                </span>
-              </button>
-            )}
-          </div>
-          {googleFeedback && (
-            <p className="text-[11px] text-[#7A2017] font-medium">{googleFeedback}</p>
-          )}
+          <p className="text-[11px] text-[#5A4636]">
+            {copy.stepD.deletionPolicyNote} · {copy.stepC.referenceIdLabel}{' '}
+            <span className="font-mono tabular-nums">{draft.letterId}</span>
+          </p>
         </div>
 
         {/* ช่องชื่อจดหมาย */}

@@ -43,6 +43,58 @@ const LOCAL_DRAFT_STORAGE_KEY = 'to_you_reply_draft_v1';
 const LOCAL_SENT_HISTORY_KEY = 'to_you_sent_letters_box_v1';
 const LOCAL_OWNER_LETTERS_KEY = 'to_you_owner_letters_v2';
 const LOCAL_OWNER_VERSIONS_KEY = 'to_you_owner_letter_versions_v1';
+const LOCAL_WRITER_SECRETS_KEY = 'to_you_reply_writer_secrets_v1';
+
+function loadWriterSecretsMap(): Record<string, string> {
+  try {
+    const raw = localStorage.getItem(LOCAL_WRITER_SECRETS_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object') return {};
+    const clean: Record<string, string> = {};
+    for (const [k, v] of Object.entries(parsed as Record<string, unknown>)) {
+      if (typeof v === 'string' && /^[a-f0-9]{64}$/.test(v)) {
+        clean[k] = v;
+      }
+    }
+    return clean;
+  } catch {
+    return {};
+  }
+}
+
+export function getExistingReplyWriterSecret(letterId: string): string | null {
+  if (!letterId) return null;
+  const map = loadWriterSecretsMap();
+  return map[letterId] || null;
+}
+
+export function getOrCreateReplyWriterSecret(letterId: string): string {
+  const map = loadWriterSecretsMap();
+  if (map[letterId] && /^[a-f0-9]{64}$/.test(map[letterId])) {
+    return map[letterId];
+  }
+  const bytes = new Uint8Array(32);
+  crypto.getRandomValues(bytes);
+  const secret = Array.from(bytes)
+    .map((b) => b.toString(16).padStart(2, '0'))
+    .join('');
+  map[letterId] = secret;
+  try {
+    localStorage.setItem(LOCAL_WRITER_SECRETS_KEY, JSON.stringify(map));
+  } catch {
+    // Ignore storage quota errors
+  }
+  return secret;
+}
+
+export function saveSentHistoryListToLocal(list: ReplyLetterDraft[]): void {
+  try {
+    localStorage.setItem(LOCAL_SENT_HISTORY_KEY, JSON.stringify(list));
+  } catch {
+    // Ignore storage quota errors
+  }
+}
 
 export function getDefaultOwnerLetters(): LetterDocument[] {
   return [

@@ -239,15 +239,15 @@ export const UI_COPY: SiteCopy = {
     emptyReplyBodyLabel: '(ยังไม่มีเนื้อหาในฉบับนี้)',
     referenceIdLabel: 'รหัสอ้างอิง:',
     editReplyBtn: 'แก้ไขจดหมายฉบับนี้',
-    syncedBadgeLabel: 'อ่านได้ทุกคน',
-    localDraftBadgeLabel: 'ฉบับร่างในเครื่อง',
+    syncedBadgeLabel: 'ในกล่องจดหมาย',
+    localDraftBadgeLabel: 'กำลังซิงก์...',
     privacyFooterNote: 'จดหมายที่ตอบกลับจะถูกเก็บอย่างดี สาบานน ',
   },
   stepD: {
     backBtn: 'กลับ',
     heading: 'เขียนจดหมายตอบกลับ',
     privacyNoticeBody:
-      'เมื่อพับจดหมายใส่ซองแล้ว จดหมายของคุณจะวางอยู่ในกล่องเพื่อให้ทุกคนเปิดอ่านได้ร่วมกัน',
+      'ข้อความและจดหมายทุกฉบับจะปรากฏในกล่องจดหมายแบบเรียลไทม์ เพื่อให้ทุกคนที่ผ่านการยืนยันแล้วเปิดอ่านร่วมกันได้ทันที',
     deletionPolicyNote:
       'กด "ล้างฉบับร่าง" เพื่อลบข้อความในเครื่องได้ตลอดเวลา',
     titleLabel: 'ชื่อจดหมาย *',

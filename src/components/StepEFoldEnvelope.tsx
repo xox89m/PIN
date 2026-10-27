@@ -1,21 +1,17 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { useSiteCopy } from '../context/SiteCopyContext';
 import { ReplyLetterDraft, SaveStatus } from '../services/letterStorage';
-import { PublishResult } from '../services/cloudConfigSync';
 import {
   GoldenEnvelopeIllustration,
   HandDrawnPenIllustration,
 } from './EnvelopeIllustrations';
-import { RotateCw, AlertCircle, CheckCircle2, Globe, Check } from 'lucide-react';
-import { soundEngine } from '../services/soundEngine';
+import { RotateCw, AlertCircle, CheckCircle2 } from 'lucide-react';
 
 interface StepEFoldEnvelopeProps {
   draft: ReplyLetterDraft;
   saveStatus: SaveStatus;
   statusMessage: string;
   isCurrentVersionConfirmedSaved: boolean;
-  isReplySharedPublicly: boolean;
-  onPublishReplyToEveryone: () => Promise<PublishResult>;
   onRetryFinalSave: () => void;
   onBackToEditReply: () => void;
   onWriteAnotherLetter: () => void;
@@ -29,8 +25,6 @@ export function StepEFoldEnvelope({
   saveStatus,
   statusMessage,
   isCurrentVersionConfirmedSaved,
-  isReplySharedPublicly,
-  onPublishReplyToEveryone,
   onRetryFinalSave,
   onBackToEditReply,
   onWriteAnotherLetter,
@@ -38,8 +32,6 @@ export function StepEFoldEnvelope({
 }: StepEFoldEnvelopeProps) {
   const copy = useSiteCopy();
   const [animPhase, setAnimPhase] = useState<FoldAnimPhase>('verifying_save');
-  const [isSharing, setIsSharing] = useState(false);
-  const [shareFeedback, setShareFeedback] = useState('');
   const foldTimerRef = useRef<number | null>(null);
 
   const clearTimers = () => {
@@ -212,42 +204,6 @@ export function StepEFoldEnvelope({
             {copy.stepE.referenceCodeLabel}{' '}
             <span className="font-mono">{draft.letterId}</span>
           </p>
-
-          {isReplySharedPublicly ? (
-            <p className="inline-flex items-center gap-1.5 text-xs text-[#C6F2D2]">
-              <Check className="w-4 h-4 shrink-0" aria-hidden="true" />
-              <span>วางไว้ในกล่องจดหมายกลางแล้ว ทุกคนสามารถเปิดอ่านได้</span>
-            </p>
-          ) : (
-            <div className="space-y-1.5">
-              <button
-                type="button"
-                disabled={isSharing}
-                onClick={() => {
-                  setIsSharing(true);
-                  setShareFeedback('');
-                  soundEngine.playSoftTapSfx();
-                  void onPublishReplyToEveryone().then((res) => {
-                    setIsSharing(false);
-                    if (!res.ok && res.errorMessage) {
-                      setShareFeedback(res.errorMessage);
-                    }
-                  });
-                }}
-                className="night-glass-btn inline-flex items-center justify-center gap-2 min-h-[42px] px-5 py-2 text-xs sm:text-sm text-[#F7DFB2] whitespace-nowrap cursor-pointer disabled:opacity-50"
-              >
-                <Globe className="w-4 h-4 shrink-0" aria-hidden="true" />
-                <span>
-                  {isSharing
-                    ? 'กำลังวางจดหมายลงกล่องกลาง...'
-                    : 'วางจดหมายฉบับนี้ลงกล่องกลางให้ทุกคนอ่านได้'}
-                </span>
-              </button>
-              {shareFeedback && (
-                <p className="text-xs text-[#FADCD8]">{shareFeedback}</p>
-              )}
-            </div>
-          )}
 
           <div className="flex flex-col sm:flex-row flex-wrap items-center justify-center gap-3 pt-1">
             <button

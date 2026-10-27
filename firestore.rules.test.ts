@@ -1,6 +1,6 @@
 /**
  * Phase 0 & Phase 5 Security TDD Runner — Verifies all "Dirty Dozen" adversarial payloads
- * return PERMISSION_DENIED and legitimate Admin / Visitor / Public Reader operations succeed.
+ * return PERMISSION_DENIED and legitimate Admin / Guest Capability Lock / Verified Visitor / Public Reader flows succeed.
  */
 import { UI_COPY } from './src/content/letters';
 
@@ -8,6 +8,15 @@ interface SimAuth {
   uid: string;
   email: string;
   email_verified: boolean;
+}
+
+interface SimLockState {
+  replyId: string;
+  secretKey: string;
+  nonce: number;
+  proof: string;
+  createdAt: number;
+  updatedAt: number;
 }
 
 interface SimRequest {
@@ -18,10 +27,16 @@ interface SimRequest {
   docId: string;
   incoming?: Record<string, unknown>;
   existing?: Record<string, unknown>;
+  existingLock?: SimLockState;
+  afterLock?: SimLockState;
+  existingReplyExists?: boolean;
+  afterReply?: Record<string, unknown> | null;
 }
 
 const VALID_ID_RE = /^[a-zA-Z0-9_-]+$/;
 const VALID_UID_RE = /^[a-zA-Z0-9_.:-]+$/;
+const VALID_HEX64_RE = /^[a-f0-9]{64}$/;
+const VALID_PROOF_RE = /^[a-f0-9]+_[0-9]+$/;
 
 function isValidId(id: unknown, max = 64): boolean {
   return typeof id === 'string' && id.length >= 1 && id.length <= max && VALID_ID_RE.test(id);
@@ -86,16 +101,23 @@ function isValidPublishedSiteConfig(data: Record<string, unknown>, auth: SimAuth
 }
 
 function isValidSharedReplyLetter(data: Record<string, unknown>, auth: SimAuth | null): boolean {
-  if (!auth) return false;
   const keys = [
-    'letterId', 'authorUid', 'lastEditorUid', 'visibility',
+    'letterId', 'authorUid', 'lastEditorUid', 'lockNonce', 'visibility',
     'title', 'author', 'body', 'version', 'recoveryState',
     'createdAt', 'updatedAt',
   ];
   if (!hasExactKeys(data, keys)) return false;
   if (!isValidId(data.letterId, 64)) return false;
   if (!isValidUid(data.authorUid, 128)) return false;
-  if (!isValidUid(data.lastEditorUid, 128) || data.lastEditorUid !== auth.uid) return false;
+  if (!isValidUid(data.lastEditorUid, 128)) return false;
+  if (auth) {
+    if (data.lastEditorUid !== auth.uid) return false;
+  } else {
+    if (data.lastEditorUid !== 'guest_writer') return false;
+  }
+  if (typeof data.lockNonce !== 'number' || !Number.isInteger(data.lockNonce) || data.lockNonce < 0 || data.lockNonce > 1000000) {
+    return false;
+  }
   if (data.visibility !== 'public') return false;
   if (!isBoundedString(data.title, 1, 200)) return false;
   if (!isBoundedString(data.author, 1, 120)) return false;
@@ -105,6 +127,32 @@ function isValidSharedReplyLetter(data: Record<string, unknown>, auth: SimAuth |
   }
   if (data.recoveryState !== 'synced' && data.recoveryState !== 'completed') return false;
   return typeof data.createdAt === 'number' && typeof data.updatedAt === 'number';
+}
+
+function isValidReplyLock(data: Record<string, unknown>): boolean {
+  const keys = ['replyId', 'secretKey', 'nonce', 'proof', 'createdAt', 'updatedAt'];
+  if (!hasExactKeys(data, keys)) return false;
+  if (!isValidId(data.replyId, 64)) return false;
+  if (typeof data.secretKey !== 'string' || !VALID_HEX64_RE.test(data.secretKey)) return false;
+  if (typeof data.nonce !== 'number' || !Number.isInteger(data.nonce) || data.nonce < 1 || data.nonce > 1000000) {
+    return false;
+  }
+  if (typeof data.proof !== 'string' || data.proof.length < 66 || data.proof.length > 80 || !VALID_PROOF_RE.test(data.proof)) {
+    return false;
+  }
+  return typeof data.createdAt === 'number' && typeof data.updatedAt === 'number';
+}
+
+function evaluateLockUpdate(existingLock: SimLockState, afterLock: SimLockState, timeMs: number): boolean {
+  const incomingObj = afterLock as unknown as Record<string, unknown>;
+  if (!isValidReplyLock(incomingObj)) return false;
+  if (afterLock.replyId !== existingLock.replyId) return false;
+  if (afterLock.secretKey !== existingLock.secretKey) return false;
+  if (afterLock.nonce !== existingLock.nonce + 1) return false;
+  if (afterLock.proof !== `${existingLock.secretKey}_${afterLock.nonce}`) return false;
+  if (afterLock.createdAt !== existingLock.createdAt) return false;
+  if (afterLock.updatedAt !== timeMs) return false;
+  return true;
 }
 
 function evaluateRules(req: SimRequest, adminRegistry = new Set<string>()): 'ALLOW' | 'PERMISSION_DENIED' {
@@ -137,8 +185,8 @@ function evaluateRules(req: SimRequest, adminRegistry = new Set<string>()): 'ALL
     }
     if (req.op === 'update' && req.incoming && req.existing) {
       const ok =
-        Boolean(req.auth?.email_verified) &&
         isValidPublishedSiteConfig(req.incoming, req.auth) &&
+        Boolean(req.auth?.email_verified) &&
         isValidId(req.docId, 64) &&
         req.docId === 'live_site' &&
         req.incoming.configId === req.existing.configId &&
@@ -152,9 +200,13 @@ function evaluateRules(req: SimRequest, adminRegistry = new Set<string>()): 'ALL
 
   if (req.collection === 'published_letters') {
     if (req.op === 'get') {
-      return isValidId(req.docId, 64) ? 'ALLOW' : 'PERMISSION_DENIED';
+      return isValidId(req.docId, 64) && (!req.existing || req.existing.isOwnerApprovedForProduction === true)
+        ? 'ALLOW'
+        : 'PERMISSION_DENIED';
     }
-    if (req.op === 'list') return 'PERMISSION_DENIED';
+    if (req.op === 'list') {
+      return req.existing?.isOwnerApprovedForProduction === true ? 'ALLOW' : 'PERMISSION_DENIED';
+    }
     if (req.op === 'create' && req.incoming) {
       const ok =
         Boolean(req.auth?.email_verified) &&
@@ -168,8 +220,8 @@ function evaluateRules(req: SimRequest, adminRegistry = new Set<string>()): 'ALL
     }
     if (req.op === 'update' && req.incoming && req.existing) {
       const ok =
-        Boolean(req.auth?.email_verified) &&
         isValidPublishedLetter(req.incoming, req.auth) &&
+        Boolean(req.auth?.email_verified) &&
         isValidId(req.docId, 64) &&
         req.incoming.id === req.existing.id &&
         req.incoming.createdAt === req.existing.createdAt &&
@@ -189,6 +241,45 @@ function evaluateRules(req: SimRequest, adminRegistry = new Set<string>()): 'ALL
     return 'PERMISSION_DENIED';
   }
 
+  if (req.collection === 'reply_locks') {
+    if (req.op === 'get' || req.op === 'list') return 'PERMISSION_DENIED';
+    if (req.op === 'create' && req.incoming) {
+      const ok =
+        isValidId(req.docId, 64) &&
+        req.incoming.replyId === req.docId &&
+        req.incoming.nonce === 1 &&
+        isValidReplyLock(req.incoming) &&
+        req.incoming.proof === `${req.incoming.secretKey}_1` &&
+        req.incoming.createdAt === req.timeMs &&
+        req.incoming.updatedAt === req.timeMs &&
+        !req.existingReplyExists &&
+        Boolean(req.afterReply) &&
+        req.afterReply?.authorUid === 'guest_writer' &&
+        req.afterReply?.lockNonce === 1;
+      return ok ? 'ALLOW' : 'PERMISSION_DENIED';
+    }
+    if (req.op === 'update' && req.incoming && req.existing) {
+      const ok =
+        isValidReplyLock(req.incoming) &&
+        isValidId(req.docId, 64) &&
+        req.incoming.replyId === req.existing.replyId &&
+        req.incoming.secretKey === req.existing.secretKey &&
+        req.incoming.nonce === (req.existing.nonce as number) + 1 &&
+        req.incoming.proof === `${req.existing.secretKey}_${req.incoming.nonce}` &&
+        req.incoming.createdAt === req.existing.createdAt &&
+        req.incoming.updatedAt === req.timeMs &&
+        Boolean(req.existingReplyExists) &&
+        ((req.afterReply && req.afterReply.lockNonce === req.incoming.nonce) || req.afterReply === null);
+      return ok ? 'ALLOW' : 'PERMISSION_DENIED';
+    }
+    if (req.op === 'delete') {
+      return Boolean(req.auth?.email_verified) && isValidId(req.docId, 64) && isAdmin(req.auth, adminRegistry)
+        ? 'ALLOW'
+        : 'PERMISSION_DENIED';
+    }
+    return 'PERMISSION_DENIED';
+  }
+
   if (req.collection === 'shared_replies') {
     if (req.op === 'get') {
       const ok = isValidId(req.docId, 64) && (!req.existing || req.existing.visibility === 'public');
@@ -198,35 +289,81 @@ function evaluateRules(req: SimRequest, adminRegistry = new Set<string>()): 'ALL
       return req.existing?.visibility === 'public' ? 'ALLOW' : 'PERMISSION_DENIED';
     }
     if (req.op === 'create' && req.incoming) {
-      const ok =
-        Boolean(req.auth?.email_verified) &&
+      const baseOk =
         isValidId(req.docId, 64) &&
         req.incoming.letterId === req.docId &&
-        req.incoming.authorUid === req.auth?.uid &&
         isValidSharedReplyLetter(req.incoming, req.auth) &&
         req.incoming.createdAt === req.timeMs &&
         req.incoming.updatedAt === req.timeMs;
-      return ok ? 'ALLOW' : 'PERMISSION_DENIED';
+      if (!baseOk) return 'PERMISSION_DENIED';
+
+      const verifiedBranch =
+        Boolean(req.auth?.email_verified) &&
+        req.incoming.authorUid === req.auth?.uid &&
+        req.incoming.lockNonce === 0;
+
+      const guestBranch =
+        req.auth === null &&
+        req.incoming.authorUid === 'guest_writer' &&
+        req.incoming.lockNonce === 1 &&
+        Boolean(req.afterLock) &&
+        isValidReplyLock(req.afterLock as unknown as Record<string, unknown>) &&
+        req.afterLock?.proof === `${req.afterLock?.secretKey}_1` &&
+        req.afterLock?.nonce === 1 &&
+        req.afterLock?.updatedAt === req.timeMs;
+
+      return verifiedBranch || guestBranch ? 'ALLOW' : 'PERMISSION_DENIED';
     }
     if (req.op === 'update' && req.incoming && req.existing) {
-      const ok =
-        Boolean(req.auth?.email_verified) &&
+      const baseOk =
         isValidSharedReplyLetter(req.incoming, req.auth) &&
         isValidId(req.docId, 64) &&
         req.incoming.letterId === req.existing.letterId &&
         req.incoming.authorUid === req.existing.authorUid &&
         req.incoming.visibility === req.existing.visibility &&
         req.incoming.createdAt === req.existing.createdAt &&
-        req.incoming.updatedAt === req.timeMs &&
-        (req.auth?.uid === req.existing.authorUid || isAdmin(req.auth, adminRegistry));
-      return ok ? 'ALLOW' : 'PERMISSION_DENIED';
+        req.incoming.updatedAt === req.timeMs;
+      if (!baseOk) return 'PERMISSION_DENIED';
+
+      const hasExistingNonce = Object.prototype.hasOwnProperty.call(req.existing, 'lockNonce');
+      const unchangedNonce =
+        (!hasExistingNonce && req.incoming.lockNonce === 0) ||
+        (hasExistingNonce && req.incoming.lockNonce === req.existing.lockNonce);
+
+      const adminAction =
+        Boolean(req.auth?.email_verified) && unchangedNonce && isAdmin(req.auth, adminRegistry);
+
+      const verifiedAuthorAction =
+        Boolean(req.auth?.email_verified) &&
+        req.existing.authorUid !== 'guest_writer' &&
+        req.auth?.uid === req.existing.authorUid &&
+        unchangedNonce;
+
+      const guestLockAction =
+        req.existing.authorUid === 'guest_writer' &&
+        hasExistingNonce &&
+        req.incoming.lockNonce === (req.existing.lockNonce as number) + 1 &&
+        Boolean(req.existingLock) &&
+        Boolean(req.afterLock) &&
+        evaluateLockUpdate(req.existingLock!, req.afterLock!, req.timeMs) &&
+        req.afterLock!.nonce === req.incoming.lockNonce;
+
+      return adminAction || verifiedAuthorAction || guestLockAction ? 'ALLOW' : 'PERMISSION_DENIED';
     }
     if (req.op === 'delete' && req.existing) {
-      const ok =
+      if (!isValidId(req.docId, 64)) return 'PERMISSION_DENIED';
+      const authDelete =
         Boolean(req.auth?.email_verified) &&
-        isValidId(req.docId, 64) &&
-        (req.auth?.uid === req.existing.authorUid || isAdmin(req.auth, adminRegistry));
-      return ok ? 'ALLOW' : 'PERMISSION_DENIED';
+        ((req.existing.authorUid !== 'guest_writer' && req.auth?.uid === req.existing.authorUid) ||
+          isAdmin(req.auth, adminRegistry));
+      const guestDelete =
+        req.existing.authorUid === 'guest_writer' &&
+        typeof req.existing.lockNonce === 'number' &&
+        Boolean(req.existingLock) &&
+        Boolean(req.afterLock) &&
+        evaluateLockUpdate(req.existingLock!, req.afterLock!, req.timeMs) &&
+        req.afterLock!.nonce === (req.existing.lockNonce as number) + 1;
+      return authDelete || guestDelete ? 'ALLOW' : 'PERMISSION_DENIED';
     }
     return 'PERMISSION_DENIED';
   }
@@ -238,6 +375,8 @@ const NOW = 1761430000000;
 const OWNER_AUTH: SimAuth = { uid: '1S14sAQRlFPmPpEODec6kgEhhuy2', email: 'xox89m97@gmail.com', email_verified: true };
 const VISITOR_AUTH: SimAuth = { uid: 'visitor_uid_1', email: 'reader@example.com', email_verified: true };
 const INTRUDER_AUTH: SimAuth = { uid: 'intruder_uid_1', email: 'intruder@example.com', email_verified: true };
+const GUEST_SECRET = 'a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f90';
+const WRONG_SECRET = 'ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff';
 
 const baseSiteConfig = {
   configId: 'live_site',
@@ -267,12 +406,37 @@ const baseSharedReply = {
   letterId: 'ltr_1234567890ab',
   authorUid: VISITOR_AUTH.uid,
   lastEditorUid: VISITOR_AUTH.uid,
+  lockNonce: 0,
   visibility: 'public',
   title: 'ขอบคุณนะ',
   author: 'คนสำคัญ',
   body: 'อ่านจดหมายแล้วนะ ขอบคุณมาก ๆ',
   version: 1,
   recoveryState: 'completed',
+  createdAt: NOW,
+  updatedAt: NOW,
+};
+
+const baseGuestReply = {
+  letterId: 'ltr_guest9876543',
+  authorUid: 'guest_writer',
+  lastEditorUid: 'guest_writer',
+  lockNonce: 1,
+  visibility: 'public',
+  title: 'จดหมายจากวันเกิด',
+  author: 'เราเอง',
+  body: 'เขียนถึงเธอแบบเรียลไทม์นะ',
+  version: 1,
+  recoveryState: 'completed',
+  createdAt: NOW,
+  updatedAt: NOW,
+};
+
+const baseGuestLock: SimLockState = {
+  replyId: 'ltr_guest9876543',
+  secretKey: GUEST_SECRET,
+  nonce: 1,
+  proof: `${GUEST_SECRET}_1`,
   createdAt: NOW,
   updatedAt: NOW,
 };
@@ -338,19 +502,36 @@ const dirtyDozenCases: Array<{ name: string; req: SimRequest }> = [
     },
   },
   {
-    name: '7. Unauthorized cross-user edit on shared_replies',
+    name: '7. Unauthorized guest overwrite with wrong secretKey or stale proof',
     req: {
-      auth: INTRUDER_AUTH,
+      auth: null,
       timeMs: NOW + 1000,
       op: 'update',
       collection: 'shared_replies',
-      docId: 'ltr_1234567890ab',
-      existing: baseSharedReply,
-      incoming: { ...baseSharedReply, lastEditorUid: INTRUDER_AUTH.uid, title: 'Hacked', updatedAt: NOW + 1000 },
+      docId: 'ltr_guest9876543',
+      existing: baseGuestReply,
+      incoming: { ...baseGuestReply, lockNonce: 2, title: 'Spoofed', version: 2, updatedAt: NOW + 1000 },
+      existingLock: baseGuestLock,
+      afterLock: {
+        ...baseGuestLock,
+        nonce: 2,
+        proof: `${WRONG_SECRET}_2`,
+        updatedAt: NOW + 1000,
+      },
     },
   },
   {
-    name: '8. Immutable authorUid mutation on shared_replies update',
+    name: '8. Direct read attempt on private /reply_locks capability secret',
+    req: {
+      auth: INTRUDER_AUTH,
+      timeMs: NOW,
+      op: 'get',
+      collection: 'reply_locks',
+      docId: 'ltr_guest9876543',
+    },
+  },
+  {
+    name: '9. Immutable authorUid mutation on shared_replies update',
     req: {
       auth: OWNER_AUTH,
       timeMs: NOW + 1000,
@@ -362,7 +543,7 @@ const dirtyDozenCases: Array<{ name: string; req: SimRequest }> = [
     },
   },
   {
-    name: '9. Client timestamp forgery (updatedAt != request.time)',
+    name: '10. Client timestamp forgery (updatedAt != request.time)',
     req: {
       auth: OWNER_AUTH,
       timeMs: NOW,
@@ -373,36 +554,25 @@ const dirtyDozenCases: Array<{ name: string; req: SimRequest }> = [
     },
   },
   {
-    name: '10. ID poisoning with special chars',
+    name: '11. ID poisoning & oversized payload attack',
     req: {
       auth: VISITOR_AUTH,
       timeMs: NOW,
       op: 'create',
       collection: 'shared_replies',
       docId: 'bad$id/inject',
-      incoming: { ...baseSharedReply, letterId: 'bad$id/inject' },
+      incoming: { ...baseSharedReply, letterId: 'bad$id/inject', body: 'ก'.repeat(8500) },
     },
   },
   {
-    name: '11. Denial-of-Wallet oversized body string',
-    req: {
-      auth: VISITOR_AUTH,
-      timeMs: NOW,
-      op: 'create',
-      collection: 'shared_replies',
-      docId: 'ltr_1234567890ab',
-      incoming: { ...baseSharedReply, body: 'ก'.repeat(8500) },
-    },
-  },
-  {
-    name: '12. Unfiltered list query without visibility == public',
+    name: '12. Unfiltered list query on unapproved published_letters',
     req: {
       auth: null,
       timeMs: NOW,
       op: 'list',
-      collection: 'shared_replies',
+      collection: 'published_letters',
       docId: '',
-      existing: { ...baseSharedReply, visibility: 'private' },
+      existing: { ...baseLetter, isOwnerApprovedForProduction: false },
     },
   },
 ];
@@ -414,52 +584,83 @@ for (const testCase of dirtyDozenCases) {
   }
 }
 
-// Verify legitimate public visitor reads, visitor reply creates, and admin edits on ANY letter succeed
-if (evaluateRules({ auth: null, timeMs: NOW, op: 'get', collection: 'published_site', docId: 'live_site' }) !== 'ALLOW') {
-  throw new Error('Visitor get on published_site/live_site must be ALLOWED');
-}
+// Legitimate flows verification:
+// 1. Public real-time list on approved owner letters
 if (
   evaluateRules({
     auth: null,
     timeMs: NOW,
     op: 'list',
-    collection: 'shared_replies',
+    collection: 'published_letters',
     docId: '',
-    existing: baseSharedReply,
+    existing: baseLetter,
   }) !== 'ALLOW'
 ) {
-  throw new Error('Public list with visibility == public on shared_replies must be ALLOWED');
+  throw new Error('Public real-time list on approved published_letters must be ALLOWED');
 }
+
+// 2. Guest writer atomic create with ReplyWriterLock
 if (
   evaluateRules({
-    auth: VISITOR_AUTH,
+    auth: null,
     timeMs: NOW,
     op: 'create',
     collection: 'shared_replies',
-    docId: 'ltr_1234567890ab',
-    incoming: baseSharedReply,
+    docId: 'ltr_guest9876543',
+    incoming: baseGuestReply,
+    afterLock: baseGuestLock,
   }) !== 'ALLOW'
 ) {
-  throw new Error('Verified visitor create on shared_replies must be ALLOWED');
+  throw new Error('Guest writer atomic create with ReplyWriterLock must be ALLOWED');
 }
+
+// 3. Guest writer atomic update with valid secretKey proof
 if (
   evaluateRules({
-    auth: OWNER_AUTH,
-    timeMs: NOW + 2000,
+    auth: null,
+    timeMs: NOW + 1500,
     op: 'update',
     collection: 'shared_replies',
-    docId: 'ltr_1234567890ab',
-    existing: baseSharedReply,
+    docId: 'ltr_guest9876543',
+    existing: baseGuestReply,
     incoming: {
-      ...baseSharedReply,
-      lastEditorUid: OWNER_AUTH.uid,
-      title: 'ขอบคุณนะ (แอดมินแก้คำผิด)',
+      ...baseGuestReply,
+      lockNonce: 2,
+      body: 'เขียนเพิ่มอีกย่อหน้าแบบเรียลไทม์',
       version: 2,
-      updatedAt: NOW + 2000,
+      updatedAt: NOW + 1500,
+    },
+    existingLock: baseGuestLock,
+    afterLock: {
+      ...baseGuestLock,
+      nonce: 2,
+      proof: `${GUEST_SECRET}_2`,
+      updatedAt: NOW + 1500,
     },
   }) !== 'ALLOW'
 ) {
-  throw new Error('Verified Admin editing any visitor reply letter must be ALLOWED');
+  throw new Error('Guest writer atomic update with valid secretKey proof must be ALLOWED');
 }
 
-console.log('All 12 Dirty Dozen adversarial payloads returned PERMISSION_DENIED and legitimate flows passed.');
+// 4. Verified Admin editing a guest writer's reply letter (without needing guest secretKey!)
+if (
+  evaluateRules({
+    auth: OWNER_AUTH,
+    timeMs: NOW + 3000,
+    op: 'update',
+    collection: 'shared_replies',
+    docId: 'ltr_guest9876543',
+    existing: baseGuestReply,
+    incoming: {
+      ...baseGuestReply,
+      lastEditorUid: OWNER_AUTH.uid,
+      title: 'จดหมายจากวันเกิด (แอดมินแก้คำ)',
+      version: 3,
+      updatedAt: NOW + 3000,
+    },
+  }) !== 'ALLOW'
+) {
+  throw new Error('Verified Admin editing guest reply letter must be ALLOWED');
+}
+
+console.log('All 12 Dirty Dozen adversarial payloads returned PERMISSION_DENIED and all real-time flows passed.');

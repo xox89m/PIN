@@ -5,7 +5,10 @@ import {
   LetterDocument,
 } from '../content/letters';
 import { useSiteCopy } from '../context/SiteCopyContext';
-import { ReplyLetterDraft } from '../services/letterStorage';
+import {
+  getExistingReplyWriterSecret,
+  ReplyLetterDraft,
+} from '../services/letterStorage';
 import { PublishResult } from '../services/cloudConfigSync';
 import {
   CoffeeAndBirthdayEnvelopeIllustration,
@@ -19,7 +22,6 @@ import {
   ArrowLeft,
   Check,
   Eye,
-  Globe,
   Home,
   LogIn,
   Mail,
@@ -63,7 +65,6 @@ interface StepCDeskProps {
   onResetOwnerLetters: () => Promise<PublishResult>;
   onAdminSaveReplyLetter: (updatedReply: ReplyLetterDraft) => Promise<PublishResult>;
   onAdminDeleteReplyLetter: (letterId: string) => Promise<PublishResult>;
-  onVisitorPublishReplyToEveryone: (reply: ReplyLetterDraft) => Promise<PublishResult>;
   onReturnToCover: () => void;
   onExitAdminMode: () => void;
   onContinueOrStartReply: () => void;
@@ -129,7 +130,6 @@ export function StepCDesk({
   onResetOwnerLetters,
   onAdminSaveReplyLetter,
   onAdminDeleteReplyLetter,
-  onVisitorPublishReplyToEveryone,
   onReturnToCover,
   onExitAdminMode,
   onContinueOrStartReply,
@@ -143,7 +143,6 @@ export function StepCDesk({
   const [adminSaveFeedback, setAdminSaveFeedback] = useState<string>('');
   const [adminSaveIsError, setAdminSaveIsError] = useState<boolean>(false);
   const [isSavingAdminEdit, setIsSavingAdminEdit] = useState<boolean>(false);
-  const [isSharingVisitorReply, setIsSharingVisitorReply] = useState<boolean>(false);
   const [confirmResetModalOpen, setConfirmResetModalOpen] = useState<boolean>(false);
 
   const animTimerRef = useRef<number | null>(null);
@@ -235,12 +234,23 @@ export function StepCDesk({
     );
   }, [selectedItem, userReplyLetters]);
 
+  useEffect(() => {
+    if (!selectedItem || adminEditor) return;
+    if (selectedItem.kind === 'owner' && !activeOwnerDoc) {
+      setSelectedItem(null);
+    } else if (selectedItem.kind === 'reply' && !activeReplyDoc) {
+      setSelectedItem(null);
+    }
+  }, [selectedItem, adminEditor, activeOwnerDoc, activeReplyDoc]);
+
   const canVisitorEditActiveReply = useMemo(() => {
     if (!activeReplyDoc) return false;
     if (localLetterIdSet.has(activeReplyDoc.letterId)) return true;
+    if (getExistingReplyWriterSecret(activeReplyDoc.letterId)) return true;
     if (
       currentUserUid &&
       activeReplyDoc.authorUid &&
+      activeReplyDoc.authorUid !== 'guest_writer' &&
       activeReplyDoc.authorUid === currentUserUid
     ) {
       return true;
@@ -1210,36 +1220,6 @@ export function StepCDesk({
                     </p>
 
                     <div className="flex flex-wrap items-center gap-3">
-                      {!activeReplyDoc.isPublicCloud && canVisitorEditActiveReply && (
-                        <button
-                          type="button"
-                          disabled={isSharingVisitorReply}
-                          onClick={() => {
-                            setIsSharingVisitorReply(true);
-                            soundEngine.playSoftTapSfx();
-                            void onVisitorPublishReplyToEveryone(activeReplyDoc).then(
-                              (res) => {
-                                setIsSharingVisitorReply(false);
-                                setAdminSaveIsError(!res.ok);
-                                setAdminSaveFeedback(
-                                  res.ok
-                                    ? 'วางจดหมายลงกล่องกลางให้ทุกคนเปิดอ่านได้แล้ว'
-                                    : res.errorMessage || ''
-                                );
-                              }
-                            );
-                          }}
-                          className="min-h-[44px] px-4 py-2 rounded-full border border-[#4A3525]/45 text-xs sm:text-sm font-medium text-[#2B1F16] hover:bg-[#4A3525]/10 inline-flex items-center gap-1.5 whitespace-nowrap cursor-pointer disabled:opacity-50"
-                        >
-                          <Globe className="w-4 h-4" aria-hidden="true" />
-                          <span>
-                            {isSharingVisitorReply
-                              ? 'กำลังแชร์...'
-                              : 'วางลงกล่องกลางให้ทุกคนอ่านได้'}
-                          </span>
-                        </button>
-                      )}
-
                       {isAdmin ? (
                         <button
                           type="button"

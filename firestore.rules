@@ -249,6 +249,7 @@ service cloud.firestore {
         data.configId.matches('^[a-zA-Z0-9_-]+$') &&
         data.configId == 'live_site' &&
         isValidUid(data.authorUid) &&
+        isSignedIn() &&
         data.authorUid == request.auth.uid &&
         data.letterOrderIds is list &&
         data.letterOrderIds.size() >= 1 &&
@@ -279,6 +280,7 @@ service cloud.firestore {
         ]) &&
         isValidId(data.id) &&
         isValidUid(data.authorUid) &&
+        isSignedIn() &&
         data.authorUid == request.auth.uid &&
         data.isOwnerApprovedForProduction is bool &&
         isBoundedString(data.letterTitle, 1, 200) &&
@@ -297,19 +299,23 @@ service cloud.firestore {
 
     function isValidSharedReplyLetter(data) {
       return data.keys().hasAll([
-          'letterId', 'authorUid', 'lastEditorUid', 'visibility',
+          'letterId', 'authorUid', 'lastEditorUid', 'lockNonce', 'visibility',
           'title', 'author', 'body', 'version', 'recoveryState',
           'createdAt', 'updatedAt'
         ]) &&
         data.keys().hasOnly([
-          'letterId', 'authorUid', 'lastEditorUid', 'visibility',
+          'letterId', 'authorUid', 'lastEditorUid', 'lockNonce', 'visibility',
           'title', 'author', 'body', 'version', 'recoveryState',
           'createdAt', 'updatedAt'
         ]) &&
         isValidId(data.letterId) &&
         isValidUid(data.authorUid) &&
         isValidUid(data.lastEditorUid) &&
-        data.lastEditorUid == request.auth.uid &&
+        ((isSignedIn() && data.lastEditorUid == request.auth.uid) ||
+          (!isSignedIn() && data.lastEditorUid == 'guest_writer')) &&
+        data.lockNonce is int &&
+        data.lockNonce >= 0 &&
+        data.lockNonce <= 1000000 &&
         data.visibility is string &&
         data.visibility.size() <= 16 &&
         data.visibility == 'public' &&
@@ -322,6 +328,28 @@ service cloud.firestore {
         data.recoveryState is string &&
         data.recoveryState.size() <= 20 &&
         (data.recoveryState == 'synced' || data.recoveryState == 'completed') &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidReplyLock(data) {
+      return data.keys().hasAll([
+          'replyId', 'secretKey', 'nonce', 'proof', 'createdAt', 'updatedAt'
+        ]) &&
+        data.keys().hasOnly([
+          'replyId', 'secretKey', 'nonce', 'proof', 'createdAt', 'updatedAt'
+        ]) &&
+        isValidId(data.replyId) &&
+        data.secretKey is string &&
+        data.secretKey.size() == 64 &&
+        data.secretKey.matches('^[a-f0-9]+$') &&
+        data.nonce is int &&
+        data.nonce >= 1 &&
+        data.nonce <= 1000000 &&
+        data.proof is string &&
+        data.proof.size() >= 66 &&
+        data.proof.size() <= 80 &&
+        data.proof.matches('^[a-f0-9]+_[0-9]+$') &&
         data.createdAt is timestamp &&
         data.updatedAt is timestamp;
     }
@@ -346,8 +374,8 @@ service cloud.firestore {
         incoming().updatedAt == request.time &&
         isAdmin();
 
-      allow update: if isVerifiedUser() &&
-        isValidPublishedSiteConfig(incoming()) &&
+      allow update: if isValidPublishedSiteConfig(incoming()) &&
+        isVerifiedUser() &&
         isValidId(configId) &&
         configId == 'live_site' &&
         incoming().configId == existing().configId &&
@@ -362,10 +390,10 @@ service cloud.firestore {
       allow delete: if false;
     }
 
-    // Published Owner Letters on Desk & Mailbox (Public single-doc read by known ID, Verified Admin write)
+    // Published Owner Letters on Desk & Mailbox (Real-time read where isOwnerApprovedForProduction == true, Verified Admin write)
     match /published_letters/{letterId} {
-      allow get: if isValidId(letterId);
-      allow list: if false;
+      allow get: if isValidId(letterId) && (resource == null || existing().isOwnerApprovedForProduction == true);
+      allow list: if existing().isOwnerApprovedForProduction == true;
 
       allow create: if isVerifiedUser() &&
         isValidId(letterId) &&
@@ -375,8 +403,8 @@ service cloud.firestore {
         incoming().updatedAt == request.time &&
         isAdmin();
 
-      allow update: if isVerifiedUser() &&
-        isValidPublishedLetter(incoming()) &&
+      allow update: if isValidPublishedLetter(incoming()) &&
+        isVerifiedUser() &&
         isValidId(letterId) &&
         incoming().id == existing().id &&
         incoming().createdAt == existing().createdAt &&
@@ -395,35 +423,113 @@ service cloud.firestore {
         isAdmin();
     }
 
-    // Shared Public Reply Letters (Readable by all visitors via visibility == 'public', editable by creator or Admin)
+    // Split-Collection Private Writer Capability Locks (Unreadable by all clients; proves possession of 256-bit secretKey)
+    match /reply_locks/{replyId} {
+      allow get, list: if false;
+
+      allow create: if isValidId(replyId) &&
+        incoming().replyId == replyId &&
+        incoming().nonce == 1 &&
+        isValidReplyLock(incoming()) &&
+        incoming().proof == incoming().secretKey + '_1' &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time &&
+        !exists(/databases/$(database)/documents/shared_replies/$(replyId)) &&
+        existsAfter(/databases/$(database)/documents/shared_replies/$(replyId)) &&
+        getAfter(/databases/$(database)/documents/shared_replies/$(replyId)).data.authorUid == 'guest_writer' &&
+        getAfter(/databases/$(database)/documents/shared_replies/$(replyId)).data.lockNonce == 1;
+
+      allow update: if isValidReplyLock(incoming()) &&
+        isValidId(replyId) &&
+        incoming().replyId == existing().replyId &&
+        incoming().secretKey == existing().secretKey &&
+        incoming().nonce == existing().nonce + 1 &&
+        incoming().proof == existing().secretKey + '_' + string(incoming().nonce) &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time &&
+        incoming().diff(existing()).affectedKeys().hasOnly(['nonce', 'proof', 'updatedAt']) &&
+        exists(/databases/$(database)/documents/shared_replies/$(replyId)) &&
+        (
+          (existsAfter(/databases/$(database)/documents/shared_replies/$(replyId)) &&
+            getAfter(/databases/$(database)/documents/shared_replies/$(replyId)).data.lockNonce == incoming().nonce) ||
+          !existsAfter(/databases/$(database)/documents/shared_replies/$(replyId))
+        );
+
+      allow delete: if isVerifiedUser() && isValidId(replyId) && isAdmin();
+    }
+
+    // Shared Public Reply Letters (Real-time readable via visibility == 'public', editable by verified author, atomic lock holder, or Admin)
     match /shared_replies/{replyId} {
       allow get: if isValidId(replyId) && (resource == null || existing().visibility == 'public');
       allow list: if existing().visibility == 'public';
 
-      allow create: if isVerifiedUser() &&
-        isValidId(replyId) &&
+      allow create: if isValidId(replyId) &&
         incoming().letterId == replyId &&
-        incoming().authorUid == request.auth.uid &&
         isValidSharedReplyLetter(incoming()) &&
         incoming().createdAt == request.time &&
-        incoming().updatedAt == request.time;
+        incoming().updatedAt == request.time &&
+        (
+          (isVerifiedUser() &&
+            incoming().authorUid == request.auth.uid &&
+            incoming().lockNonce == 0) ||
+          (!isSignedIn() &&
+            incoming().authorUid == 'guest_writer' &&
+            incoming().lockNonce == 1 &&
+            existsAfter(/databases/$(database)/documents/reply_locks/$(replyId)) &&
+            getAfter(/databases/$(database)/documents/reply_locks/$(replyId)).data.nonce == 1 &&
+            getAfter(/databases/$(database)/documents/reply_locks/$(replyId)).data.updatedAt == request.time)
+        );
 
-      allow update: if isVerifiedUser() &&
-        isValidSharedReplyLetter(incoming()) &&
+      allow update: if isValidSharedReplyLetter(incoming()) &&
         isValidId(replyId) &&
         incoming().letterId == existing().letterId &&
         incoming().authorUid == existing().authorUid &&
         incoming().visibility == existing().visibility &&
         incoming().createdAt == existing().createdAt &&
         incoming().updatedAt == request.time &&
-        incoming().diff(existing()).affectedKeys().hasOnly([
-          'lastEditorUid', 'title', 'author', 'body', 'version', 'recoveryState', 'updatedAt'
-        ]) &&
-        (request.auth.uid == existing().authorUid || isAdmin());
+        (
+          // Action 1: Verified Admin can edit any reply letter (including legacy docs without lockNonce)
+          (isVerifiedUser() &&
+            ((!('lockNonce' in existing()) && incoming().lockNonce == 0) ||
+              ('lockNonce' in existing() && incoming().lockNonce == existing().lockNonce)) &&
+            incoming().diff(existing()).affectedKeys().hasOnly([
+              'lastEditorUid', 'lockNonce', 'title', 'author', 'body', 'version', 'recoveryState', 'updatedAt'
+            ]) &&
+            isAdmin()) ||
+          // Action 2: Original Verified Google Author edits their own letter
+          (isVerifiedUser() &&
+            existing().authorUid != 'guest_writer' &&
+            request.auth.uid == existing().authorUid &&
+            (('lockNonce' in existing() && incoming().lockNonce == existing().lockNonce) ||
+              (!('lockNonce' in existing()) && incoming().lockNonce == 0)) &&
+            incoming().diff(existing()).affectedKeys().hasOnly([
+              'lastEditorUid', 'lockNonce', 'title', 'author', 'body', 'version', 'recoveryState', 'updatedAt'
+            ])) ||
+          // Action 3: Guest Writer edits their own letter via atomic /reply_locks capability proof
+          (existing().authorUid == 'guest_writer' &&
+            'lockNonce' in existing() &&
+            incoming().lockNonce == existing().lockNonce + 1 &&
+            incoming().diff(existing()).affectedKeys().hasOnly([
+              'lastEditorUid', 'lockNonce', 'title', 'author', 'body', 'version', 'recoveryState', 'updatedAt'
+            ]) &&
+            exists(/databases/$(database)/documents/reply_locks/$(replyId)) &&
+            existsAfter(/databases/$(database)/documents/reply_locks/$(replyId)) &&
+            getAfter(/databases/$(database)/documents/reply_locks/$(replyId)).data.nonce == incoming().lockNonce &&
+            getAfter(/databases/$(database)/documents/reply_locks/$(replyId)).data.updatedAt == request.time)
+        );
 
-      allow delete: if isVerifiedUser() &&
-        isValidId(replyId) &&
-        (request.auth.uid == existing().authorUid || isAdmin());
+      allow delete: if isValidId(replyId) &&
+        (
+          (isVerifiedUser() &&
+            ((existing().authorUid != 'guest_writer' && request.auth.uid == existing().authorUid) ||
+              isAdmin())) ||
+          (existing().authorUid == 'guest_writer' &&
+            'lockNonce' in existing() &&
+            exists(/databases/$(database)/documents/reply_locks/$(replyId)) &&
+            existsAfter(/databases/$(database)/documents/reply_locks/$(replyId)) &&
+            getAfter(/databases/$(database)/documents/reply_locks/$(replyId)).data.nonce == existing().lockNonce + 1 &&
+            getAfter(/databases/$(database)/documents/reply_locks/$(replyId)).data.updatedAt == request.time)
+        );
     }
   }
 }

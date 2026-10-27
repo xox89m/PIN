@@ -32,6 +32,8 @@ import {
   validateFirestoreConnectionOnce,
 } from '../firebase';
 import {
+  getExistingReplyWriterSecret,
+  getOrCreateReplyWriterSecret,
   mergeWithDefaultSiteCopy,
   ReplyLetterDraft,
   saveOwnerLettersToLocal,
@@ -39,6 +41,21 @@ import {
 } from './letterStorage';
 
 const VALID_ID_REGEX = /^[a-zA-Z0-9_-]+$/;
+const replyWriteQueues = new Map<string, Promise<unknown>>();
+
+function enqueueReplyWrite<T>(replyId: string, task: () => Promise<T>): Promise<T> {
+  const prev = replyWriteQueues.get(replyId) || Promise.resolve();
+  const next = prev.catch(() => undefined).then(task);
+  replyWriteQueues.set(
+    replyId,
+    next.finally(() => {
+      if (replyWriteQueues.get(replyId) === next) {
+        replyWriteQueues.delete(replyId);
+      }
+    })
+  );
+  return next;
+}
 
 function clampStr(val: unknown, fallback: string, minLen: number, maxLen: number): string {
   const raw = typeof val === 'string' ? val : fallback;
@@ -266,35 +283,6 @@ export async function signInAdminWithGoogle(): Promise<{
   }
 }
 
-export async function signInVisitorWithGoogle(): Promise<{
-  ok: boolean;
-  email?: string;
-  errorMessage?: string;
-}> {
-  try {
-    const cred = await signInWithPopup(auth, googleProvider);
-    if (!cred.user.emailVerified) {
-      return {
-        ok: false,
-        errorMessage: 'กรุณาใช้บัญชี Google ที่ยืนยันอีเมลแล้วเพื่อวางจดหมายในกล่องกลาง',
-      };
-    }
-    return { ok: true, email: cred.user.email || '' };
-  } catch (err: unknown) {
-    const code = (err as { code?: string })?.code || '';
-    if (code === 'auth/popup-closed-by-user' || code === 'auth/cancelled-popup-request') {
-      return {
-        ok: false,
-        errorMessage: 'ยกเลิกการยืนยันตัวตน Google',
-      };
-    }
-    return {
-      ok: false,
-      errorMessage: 'ไม่สามารถเปิดหน้าต่างยืนยันตัวตน Google ได้ กรุณาลองใหม่อีกครั้ง',
-    };
-  }
-}
-
 export async function signOutAdminGoogle(): Promise<void> {
   try {
     await signOut(auth);
@@ -316,6 +304,7 @@ export async function publishAdminStateToEveryone(params: {
   siteCopy: SiteCopy;
   ownerLetters: LetterDocument[];
   deletedLetterId?: string;
+  silentIfUnauthenticated?: boolean;
 }): Promise<PublishResult> {
   let activeUser = auth.currentUser;
 
@@ -324,6 +313,9 @@ export async function publishAdminStateToEveryone(params: {
     !activeUser.emailVerified ||
     activeUser.email?.toLowerCase() !== BOOTSTRAPPED_ADMIN_EMAIL.toLowerCase()
   ) {
+    if (params.silentIfUnauthenticated) {
+      return { ok: false, errorMessage: 'ยังไม่ได้เข้าสู่ระบบผู้ดูแล' };
+    }
     const loginRes = await signInAdminWithGoogle();
     if (!loginRes.ok) {
       return { ok: false, errorMessage: loginRes.errorMessage };
@@ -456,8 +448,9 @@ export async function publishAdminStateToEveryone(params: {
 }
 
 /**
- * บันทึกหรืออัปเดตจดหมายตอบกลับลง /shared_replies/{letterId} เพื่อให้ทุกคนเปิดอ่านได้ร่วมกัน
- * ผู้เขียนแก้ไขของตัวเองได้ และผู้ดูแล (Admin) แก้ไขได้ทุกฉบับของทุกคน
+ * บันทึกหรืออัปเดตจดหมายตอบกลับลง /shared_replies/{letterId} แบบเรียลไทม์อัตโนมัติ
+ * รองรับทั้งผู้เขียนที่ผ่านหน้าวันเกิดโดยไม่ต้องล็อกอิน Google (ผ่าน Atomic Split-Collection Capability Lock)
+ * และผู้ดูแลระบบ (Admin) ที่แก้ไขได้ทุกฉบับของทุกคน
  */
 export async function saveSharedReplyToFirestore(params: {
   draft: ReplyLetterDraft;
@@ -465,140 +458,278 @@ export async function saveSharedReplyToFirestore(params: {
   requireAdmin?: boolean;
 }): Promise<PublishResult> {
   const { draft, promptSignInIfNeeded = false, requireAdmin = false } = params;
-  let activeUser = auth.currentUser;
-
-  if (requireAdmin) {
-    if (
-      !activeUser ||
-      !activeUser.emailVerified ||
-      activeUser.email?.toLowerCase() !== BOOTSTRAPPED_ADMIN_EMAIL.toLowerCase()
-    ) {
-      if (!promptSignInIfNeeded) {
-        return { ok: false, errorMessage: 'ยังไม่ได้เข้าสู่ระบบผู้ดูแล' };
-      }
-      const loginRes = await signInAdminWithGoogle();
-      if (!loginRes.ok) {
-        return { ok: false, errorMessage: loginRes.errorMessage };
-      }
-      activeUser = auth.currentUser;
-    }
-  } else if (!activeUser || !activeUser.emailVerified) {
-    if (!promptSignInIfNeeded) {
-      return { ok: false, errorMessage: 'ยังไม่ได้ยืนยันบัญชีสำหรับแชร์ขึ้นกล่องกลาง' };
-    }
-    const loginRes = await signInVisitorWithGoogle();
-    if (!loginRes.ok) {
-      return { ok: false, errorMessage: loginRes.errorMessage };
-    }
-    activeUser = auth.currentUser;
-  }
-
-  if (!activeUser || !activeUser.emailVerified) {
-    return { ok: false, errorMessage: 'ยังไม่ได้เข้าสู่ระบบ' };
-  }
-
   const safeId = sanitizeId(draft.letterId, 'ltr_shared');
-  const replyPath = `shared_replies/${safeId}`;
-  const replyRef = doc(db, 'shared_replies', safeId);
 
-  const safeTitle = clampStr(draft.title, 'จดหมายตอบกลับ', 1, 200);
-  const safeAuthor = clampStr(draft.author, 'คุณ', 1, 120);
-  const safeBody = clampStr(draft.body, safeTitle, 1, 8000);
-  const safeVersion = Math.max(1, Math.min(100000, Math.floor(draft.version || 1)));
-  const safeRecovery: 'synced' | 'completed' =
-    draft.recoveryState === 'completed' ? 'completed' : 'synced';
+  return enqueueReplyWrite(safeId, async () => {
+    let activeUser = auth.currentUser;
 
-  try {
-    const existingSnap = await getDoc(replyRef);
-    if (existingSnap.exists() && existingSnap.data()?.createdAt) {
-      await updateDoc(replyRef, {
-        lastEditorUid: activeUser.uid,
-        title: safeTitle,
-        author: safeAuthor,
-        body: safeBody,
-        version: safeVersion,
-        recoveryState: safeRecovery,
-        updatedAt: serverTimestamp(),
-      });
-    } else {
-      await setDoc(replyRef, {
-        letterId: safeId,
-        authorUid: activeUser.uid,
-        lastEditorUid: activeUser.uid,
-        visibility: 'public',
-        title: safeTitle,
-        author: safeAuthor,
-        body: safeBody,
-        version: safeVersion,
-        recoveryState: safeRecovery,
-        createdAt: serverTimestamp(),
-        updatedAt: serverTimestamp(),
-      });
+    if (requireAdmin) {
+      if (
+        !activeUser ||
+        !activeUser.emailVerified ||
+        activeUser.email?.toLowerCase() !== BOOTSTRAPPED_ADMIN_EMAIL.toLowerCase()
+      ) {
+        if (!promptSignInIfNeeded) {
+          return { ok: false, errorMessage: 'ยังไม่ได้เข้าสู่ระบบผู้ดูแล' };
+        }
+        const loginRes = await signInAdminWithGoogle();
+        if (!loginRes.ok) {
+          return { ok: false, errorMessage: loginRes.errorMessage };
+        }
+        activeUser = auth.currentUser;
+      }
     }
-    return { ok: true };
-  } catch (error: unknown) {
-    if (isPermissionDeniedError(error)) {
-      try {
-        handleFirestoreError(error, OperationType.WRITE, replyPath);
-      } catch {
-        // Logged structured FirestoreErrorInfo
+
+    const isVerifiedUser = Boolean(activeUser && activeUser.emailVerified);
+    const isVerifiedAdmin = Boolean(
+      isVerifiedUser &&
+        activeUser?.email?.toLowerCase() === BOOTSTRAPPED_ADMIN_EMAIL.toLowerCase()
+    );
+
+    const replyPath = `shared_replies/${safeId}`;
+    const replyRef = doc(db, 'shared_replies', safeId);
+    const lockRef = doc(db, 'reply_locks', safeId);
+
+    const safeTitle = clampStr(draft.title, 'จดหมายตอบกลับ', 1, 200);
+    const safeAuthor = clampStr(draft.author, 'คุณ', 1, 120);
+    const safeBody =
+      typeof draft.body === 'string' && draft.body.length > 0
+        ? draft.body.slice(0, 8000)
+        : ' ';
+    const safeVersion = Math.max(1, Math.min(100000, Math.floor(draft.version || 1)));
+    const safeRecovery: 'synced' | 'completed' =
+      draft.recoveryState === 'completed' ? 'completed' : 'synced';
+
+    try {
+      const existingSnap = await getDoc(replyRef);
+
+      if (existingSnap.exists() && existingSnap.data()?.createdAt) {
+        const existingData = existingSnap.data();
+        const existingAuthorUid =
+          typeof existingData.authorUid === 'string' ? existingData.authorUid : '';
+        const existingLockNonce =
+          typeof existingData.lockNonce === 'number' ? existingData.lockNonce : 0;
+
+        // Branch 1: Verified Admin or Verified Google Author updating directly
+        if (
+          isVerifiedUser &&
+          activeUser &&
+          (isVerifiedAdmin ||
+            (existingAuthorUid !== 'guest_writer' && existingAuthorUid === activeUser.uid))
+        ) {
+          await updateDoc(replyRef, {
+            lastEditorUid: activeUser.uid,
+            lockNonce: existingLockNonce,
+            title: safeTitle,
+            author: safeAuthor,
+            body: safeBody,
+            version: safeVersion,
+            recoveryState: safeRecovery,
+            updatedAt: serverTimestamp(),
+          });
+          return { ok: true };
+        }
+
+        // Branch 2: Guest-authored letter updated by the browser holding its 256-bit secretKey
+        if (existingAuthorUid === 'guest_writer') {
+          const secretKey = getExistingReplyWriterSecret(safeId);
+          if (!secretKey) {
+            return {
+              ok: false,
+              errorMessage: 'สามารถแก้ไขได้เฉพาะผู้เขียนเครื่องเดิมหรือผู้ดูแลระบบเท่านั้น',
+            };
+          }
+
+          const nextNonce = Math.max(1, existingLockNonce) + 1;
+          const editorUid = activeUser ? activeUser.uid : 'guest_writer';
+          const batch = writeBatch(db);
+          batch.update(lockRef, {
+            nonce: nextNonce,
+            proof: `${secretKey}_${nextNonce}`,
+            updatedAt: serverTimestamp(),
+          });
+          batch.update(replyRef, {
+            lastEditorUid: editorUid,
+            lockNonce: nextNonce,
+            title: safeTitle,
+            author: safeAuthor,
+            body: safeBody,
+            version: safeVersion,
+            recoveryState: safeRecovery,
+            updatedAt: serverTimestamp(),
+          });
+          await batch.commit();
+          return { ok: true };
+        }
+
+        return {
+          ok: false,
+          errorMessage: 'ไม่มีสิทธิ์แก้ไขจดหมายฉบับนี้',
+        };
+      }
+
+      // Document does not exist yet -> Create in real-time
+      if (isVerifiedUser && activeUser) {
+        await setDoc(replyRef, {
+          letterId: safeId,
+          authorUid: activeUser.uid,
+          lastEditorUid: activeUser.uid,
+          lockNonce: 0,
+          visibility: 'public',
+          title: safeTitle,
+          author: safeAuthor,
+          body: safeBody,
+          version: safeVersion,
+          recoveryState: safeRecovery,
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        });
+        return { ok: true };
+      }
+
+      if (!activeUser) {
+        const secretKey = getOrCreateReplyWriterSecret(safeId);
+        const batch = writeBatch(db);
+        batch.set(lockRef, {
+          replyId: safeId,
+          secretKey,
+          nonce: 1,
+          proof: `${secretKey}_1`,
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        });
+        batch.set(replyRef, {
+          letterId: safeId,
+          authorUid: 'guest_writer',
+          lastEditorUid: 'guest_writer',
+          lockNonce: 1,
+          visibility: 'public',
+          title: safeTitle,
+          author: safeAuthor,
+          body: safeBody,
+          version: safeVersion,
+          recoveryState: safeRecovery,
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        });
+        await batch.commit();
+        return { ok: true };
+      }
+
+      return { ok: false, errorMessage: 'บัญชีที่เข้าสู่ระบบยังไม่ได้ยืนยันอีเมล' };
+    } catch (error: unknown) {
+      if (isPermissionDeniedError(error)) {
+        try {
+          handleFirestoreError(error, OperationType.WRITE, replyPath);
+        } catch {
+          // Logged structured FirestoreErrorInfo
+        }
+        return {
+          ok: false,
+          errorMessage:
+            'ไม่มีสิทธิ์แก้ไขจดหมายฉบับนี้บนคลาวด์ กรุณาเข้าสู่ระบบด้วยบัญชีผู้ดูแลระบบ',
+        };
       }
       return {
         ok: false,
-        errorMessage: 'ไม่มีสิทธิ์แก้ไขจดหมายฉบับนี้บนคลาวด์ กรุณาเข้าสู่ระบบด้วยบัญชีผู้เขียนหรือผู้ดูแล',
+        errorMessage: 'ไม่สามารถซิงก์จดหมายแบบเรียลไทม์ได้ในขณะนี้',
       };
     }
-    return {
-      ok: false,
-      errorMessage: 'ไม่สามารถซิงก์จดหมายขึ้นกล่องกลางได้ในขณะนี้',
-    };
-  }
+  });
 }
 
 export async function deleteSharedReplyFromFirestore(
   letterId: string,
   requireAdmin = false
 ): Promise<PublishResult> {
-  let activeUser = auth.currentUser;
-  if (requireAdmin) {
-    if (
-      !activeUser ||
-      !activeUser.emailVerified ||
-      activeUser.email?.toLowerCase() !== BOOTSTRAPPED_ADMIN_EMAIL.toLowerCase()
-    ) {
-      const loginRes = await signInAdminWithGoogle();
-      if (!loginRes.ok) {
-        return { ok: false, errorMessage: loginRes.errorMessage };
-      }
-      activeUser = auth.currentUser;
-    }
-  }
-
-  if (!activeUser || !activeUser.emailVerified) {
-    return { ok: false, errorMessage: 'ยังไม่ได้เข้าสู่ระบบเพื่อลบจดหมายออนไลน์' };
-  }
-
   const safeId = sanitizeId(letterId, '');
   if (!safeId) return { ok: false, errorMessage: 'รหัสจดหมายไม่ถูกต้อง' };
 
-  const replyPath = `shared_replies/${safeId}`;
-  try {
-    await deleteDoc(doc(db, 'shared_replies', safeId));
-    return { ok: true };
-  } catch (error: unknown) {
-    if (isPermissionDeniedError(error)) {
-      try {
-        handleFirestoreError(error, OperationType.DELETE, replyPath);
-      } catch {
-        // Logged structured FirestoreErrorInfo
+  return enqueueReplyWrite(safeId, async () => {
+    let activeUser = auth.currentUser;
+    if (requireAdmin) {
+      if (
+        !activeUser ||
+        !activeUser.emailVerified ||
+        activeUser.email?.toLowerCase() !== BOOTSTRAPPED_ADMIN_EMAIL.toLowerCase()
+      ) {
+        const loginRes = await signInAdminWithGoogle();
+        if (!loginRes.ok) {
+          return { ok: false, errorMessage: loginRes.errorMessage };
+        }
+        activeUser = auth.currentUser;
       }
-      return {
-        ok: false,
-        errorMessage: 'ไม่มีสิทธิ์ลบจดหมายฉบับนี้จากกล่องกลาง',
-      };
     }
-    return { ok: false, errorMessage: 'ลบจดหมายจากกล่องกลางไม่สำเร็จ' };
-  }
+
+    const isVerifiedUser = Boolean(activeUser && activeUser.emailVerified);
+    const isVerifiedAdmin = Boolean(
+      isVerifiedUser &&
+        activeUser?.email?.toLowerCase() === BOOTSTRAPPED_ADMIN_EMAIL.toLowerCase()
+    );
+
+    const replyPath = `shared_replies/${safeId}`;
+    const replyRef = doc(db, 'shared_replies', safeId);
+    const lockRef = doc(db, 'reply_locks', safeId);
+
+    try {
+      const existingSnap = await getDoc(replyRef);
+      if (!existingSnap.exists()) {
+        return { ok: true };
+      }
+
+      if (isVerifiedAdmin) {
+        const batch = writeBatch(db);
+        batch.delete(replyRef);
+        batch.delete(lockRef);
+        await batch.commit();
+        return { ok: true };
+      }
+
+      const existingData = existingSnap.data();
+      if (
+        isVerifiedUser &&
+        activeUser &&
+        existingData.authorUid !== 'guest_writer' &&
+        existingData.authorUid === activeUser.uid
+      ) {
+        await deleteDoc(replyRef);
+        return { ok: true };
+      }
+
+      if (existingData.authorUid === 'guest_writer') {
+        const secretKey = getExistingReplyWriterSecret(safeId);
+        const prevNonce =
+          typeof existingData.lockNonce === 'number' ? existingData.lockNonce : 1;
+        if (secretKey) {
+          const nextNonce = prevNonce + 1;
+          const batch = writeBatch(db);
+          batch.update(lockRef, {
+            nonce: nextNonce,
+            proof: `${secretKey}_${nextNonce}`,
+            updatedAt: serverTimestamp(),
+          });
+          batch.delete(replyRef);
+          await batch.commit();
+          return { ok: true };
+        }
+      }
+
+      return { ok: false, errorMessage: 'ไม่มีสิทธิ์ลบจดหมายฉบับนี้จากกล่องกลาง' };
+    } catch (error: unknown) {
+      if (isPermissionDeniedError(error)) {
+        try {
+          handleFirestoreError(error, OperationType.DELETE, replyPath);
+        } catch {
+          // Logged structured FirestoreErrorInfo
+        }
+        return {
+          ok: false,
+          errorMessage: 'ไม่มีสิทธิ์ลบจดหมายฉบับนี้จากกล่องกลาง',
+        };
+      }
+      return { ok: false, errorMessage: 'ลบจดหมายจากกล่องกลางไม่สำเร็จ' };
+    }
+  });
 }
 
 function timestampToIso(val: unknown): string {
@@ -646,7 +777,7 @@ export function subscribeToSharedReplies(
             letterId: d.letterId,
             title: d.title,
             author: d.author,
-            body: d.body,
+            body: d.body === ' ' ? '' : d.body,
             version: ver,
             lastModifiedIso: updatedIso,
             lastSavedVersion: ver,
@@ -674,28 +805,39 @@ export function subscribeToSharedReplies(
 }
 
 /**
- * Subscribe ผู้เข้าชมทุกคนเข้ากับข้อมูลสดบน Cloud Firestore แบบเรียลไทม์ (ไม่ต้องล็อกอิน)
- * ทันทีที่แอดมินแก้คำหน้าเว็บหรือแก้เนื้อหาจดหมาย ทุกคนจะเห็นตรงกันทันที
+ * Subscribe ผู้เข้าชมทุกคนเข้ากับข้อมูลสดบน Cloud Firestore แบบเรียลไทม์ทั้งหมด
+ * ทั้งข้อความหน้าเว็บ (/published_site/live_site) และจดหมายหลักทุกฉบับ (/published_letters)
  */
 export function subscribeToPublishedSiteState(callbacks: {
   onSiteCopyChange: (copy: SiteCopy) => void;
   onOwnerLettersChange: (letters: LetterDocument[]) => void;
+  onLiveSiteExistsChange?: (exists: boolean) => void;
 }): Unsubscribe {
   void validateFirestoreConnectionOnce();
 
   let currentOrderIds: string[] = ['apology', 'birthday'];
   const letterCache = new Map<string, LetterDocument>();
-  const letterUnsubMap = new Map<string, Unsubscribe>();
-  let hasCloudData = false;
+  let hasCloudLetters = false;
 
   const emitOrderedLettersIfReady = () => {
-    if (!hasCloudData || letterCache.size === 0) return;
+    if (!hasCloudLetters || letterCache.size === 0) return;
 
     const ordered: LetterDocument[] = [];
+    const seenIds = new Set<string>();
+
     for (const id of currentOrderIds) {
       const found = letterCache.get(id);
-      if (found) {
+      if (found && !seenIds.has(id)) {
         ordered.push(found);
+        seenIds.add(id);
+      }
+    }
+
+    // รวมจดหมายที่อนุมัติแล้วทุกฉบับในคอลเลกชัน แม้ลำดับใน live_site จะยังซิงก์ตามมาทีหลัง
+    for (const [id, docItem] of letterCache.entries()) {
+      if (!seenIds.has(id)) {
+        ordered.push(docItem);
+        seenIds.add(id);
       }
     }
 
@@ -722,72 +864,63 @@ export function subscribeToPublishedSiteState(callbacks: {
     callbacks.onOwnerLettersChange(ordered);
   };
 
-  const syncLetterListeners = (nextOrderIds: string[]) => {
-    const desiredSet = new Set(nextOrderIds);
+  const lettersPath = 'published_letters';
+  const lettersQuery = query(
+    collection(db, 'published_letters'),
+    where('isOwnerApprovedForProduction', '==', true)
+  );
 
-    for (const [id, unsub] of letterUnsubMap.entries()) {
-      if (!desiredSet.has(id)) {
-        unsub();
-        letterUnsubMap.delete(id);
-        letterCache.delete(id);
+  const unsubLetters = onSnapshot(
+    lettersQuery,
+    (snapshot) => {
+      letterCache.clear();
+      snapshot.forEach((docSnap) => {
+        const d = docSnap.data();
+        if (
+          typeof d.id === 'string' &&
+          typeof d.letterTitle === 'string' &&
+          Array.isArray(d.paragraphs)
+        ) {
+          letterCache.set(d.id, {
+            id: d.id,
+            isOwnerApprovedForProduction: Boolean(d.isOwnerApprovedForProduction),
+            letterTitle: d.letterTitle,
+            senderLabel: typeof d.senderLabel === 'string' ? d.senderLabel : '',
+            dateLabel: typeof d.dateLabel === 'string' ? d.dateLabel : '',
+            salutation: typeof d.salutation === 'string' ? d.salutation : '',
+            paragraphs: d.paragraphs.filter((p): p is string => typeof p === 'string'),
+            signOff: typeof d.signOff === 'string' ? d.signOff : '',
+            senderName: typeof d.senderName === 'string' ? d.senderName : '',
+          });
+        }
+      });
+
+      if (letterCache.size > 0) {
+        hasCloudLetters = true;
+        emitOrderedLettersIfReady();
+      }
+    },
+    (error) => {
+      if (isPermissionDeniedError(error)) {
+        try {
+          handleFirestoreError(error, OperationType.LIST, lettersPath);
+        } catch {
+          // Logged structured error
+        }
       }
     }
-
-    for (const id of nextOrderIds) {
-      if (!VALID_ID_REGEX.test(id) || letterUnsubMap.has(id)) continue;
-      const letterPath = `published_letters/${id}`;
-      const unsub = onSnapshot(
-        doc(db, 'published_letters', id),
-        (snap) => {
-          if (!snap.exists()) {
-            letterCache.delete(id);
-            emitOrderedLettersIfReady();
-            return;
-          }
-          const d = snap.data();
-          if (
-            typeof d.id === 'string' &&
-            typeof d.letterTitle === 'string' &&
-            Array.isArray(d.paragraphs)
-          ) {
-            hasCloudData = true;
-            letterCache.set(id, {
-              id: d.id,
-              isOwnerApprovedForProduction: Boolean(d.isOwnerApprovedForProduction),
-              letterTitle: d.letterTitle,
-              senderLabel: typeof d.senderLabel === 'string' ? d.senderLabel : '',
-              dateLabel: typeof d.dateLabel === 'string' ? d.dateLabel : '',
-              salutation: typeof d.salutation === 'string' ? d.salutation : '',
-              paragraphs: d.paragraphs.filter((p): p is string => typeof p === 'string'),
-              signOff: typeof d.signOff === 'string' ? d.signOff : '',
-              senderName: typeof d.senderName === 'string' ? d.senderName : '',
-            });
-            emitOrderedLettersIfReady();
-          }
-        },
-        (error) => {
-          if (isPermissionDeniedError(error)) {
-            try {
-              handleFirestoreError(error, OperationType.GET, letterPath);
-            } catch {
-              // Logged structured error
-            }
-          }
-        }
-      );
-      letterUnsubMap.set(id, unsub);
-    }
-  };
-
-  syncLetterListeners(currentOrderIds);
+  );
 
   const sitePath = 'published_site/live_site';
   const unsubSite = onSnapshot(
     doc(db, 'published_site', 'live_site'),
     (snap) => {
-      if (!snap.exists()) return;
+      if (!snap.exists()) {
+        callbacks.onLiveSiteExistsChange?.(false);
+        return;
+      }
+      callbacks.onLiveSiteExistsChange?.(true);
       const data = snap.data();
-      hasCloudData = true;
 
       const mergedCopy = mergeWithDefaultSiteCopy(data);
       saveSiteCopyToLocal(mergedCopy);
@@ -799,7 +932,6 @@ export function subscribeToPublishedSiteState(callbacks: {
         );
         if (validIds.length > 0) {
           currentOrderIds = validIds;
-          syncLetterListeners(currentOrderIds);
           emitOrderedLettersIfReady();
         }
       }
@@ -816,10 +948,7 @@ export function subscribeToPublishedSiteState(callbacks: {
   );
 
   return () => {
+    unsubLetters();
     unsubSite();
-    for (const unsub of letterUnsubMap.values()) {
-      unsub();
-    }
-    letterUnsubMap.clear();
   };
 }
